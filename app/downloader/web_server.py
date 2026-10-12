@@ -2,23 +2,177 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
+import mimetypes
+import os
 from pathlib import Path
 import socket
 import threading
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urlsplit
 import webbrowser
 
+from .config import CONFIG_PATH, load_config
 from .services.download_tasks import DownloadTask, DownloadTaskManager
 
 
 STATIC_DIR = Path(__file__).with_name("web") / "static"
 MAX_REQUEST_BYTES = 16_384
+MEDIA_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm",
+}
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
+
+
+def gallery_items(downloads_dir: Path) -> list[dict[str, Any]]:
+    """Return media directly under the configured downloads folder."""
+    if not downloads_dir.exists():
+        return []
+    root = downloads_dir.resolve()
+    items: list[dict[str, Any]] = []
+    for path in root.iterdir():
+        if path.suffix.lower() not in MEDIA_EXTENSIONS:
+            continue
+        try:
+            resolved_path = path.resolve(strict=True)
+            resolved_path.relative_to(root)
+            if not resolved_path.is_file():
+                continue
+            details = resolved_path.stat()
+        except (OSError, ValueError):
+            continue
+        items.append(
+            {
+                "name": path.name,
+                "url": f"/api/gallery/media/{quote(path.name, safe='')}",
+                "kind": "video" if path.suffix.lower() in {".mp4", ".webm"} else "image",
+                "size": details.st_size,
+                "modified": details.st_mtime,
+            }
+        )
+    return sorted(items, key=lambda item: item["modified"], reverse=True)
+
+
+def read_public_config() -> dict[str, Any]:
+    """Return editable settings without revealing credential values."""
+    config = load_config()
+    credentials_configured = False
+    try:
+        keys_data = json.loads(config.keys_file.read_text(encoding="utf-8"))
+        credentials = keys_data["services"]["rule34"]
+        if not isinstance(credentials, dict):
+            return {
+                "downloads_dir": str(config.downloads_dir),
+                "rule34_requests_per_second": config.rate_limits.get("rule34", 1.0),
+                "credentials_configured": False,
+            }
+        credentials_configured = bool(
+            isinstance(credentials.get("api_key"), str)
+            and credentials["api_key"].strip()
+            and str(credentials.get("user_id", "")).strip()
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        credentials_configured = False
+    return {
+        "downloads_dir": str(config.downloads_dir),
+        "rule34_requests_per_second": config.rate_limits.get("rule34", 1.0),
+        "credentials_configured": credentials_configured,
+    }
+
+
+def update_public_config(payload: dict[str, Any]) -> None:
+    """Update the download folder, Rule34 rate, and optional credentials."""
+    current_config = load_config()
+    downloads_dir = payload.get("downloads_dir")
+    if not isinstance(downloads_dir, str) or not downloads_dir.strip():
+        raise ValueError("Choose a download folder.")
+    downloads_dir = downloads_dir.strip()
+    if len(downloads_dir) > 4096:
+        raise ValueError("Download folder path is too long.")
+
+    requests_per_second = payload.get("rule34_requests_per_second")
+    if (
+        isinstance(requests_per_second, bool)
+        or not isinstance(requests_per_second, (int, float))
+        or requests_per_second <= 0
+        or requests_per_second > 1_000_000
+        or not math.isfinite(float(requests_per_second))
+    ):
+        raise ValueError(
+            "Rule34 requests per second must be greater than 0 and no more than "
+            "1,000,000."
+        )
+
+    api_key = payload.get("api_key", "")
+    user_id = payload.get("user_id", "")
+    if not isinstance(api_key, str) or not isinstance(user_id, str):
+        raise ValueError("Credentials must be strings.")
+    api_key = api_key.strip()
+    user_id = user_id.strip()
+    if bool(api_key) != bool(user_id):
+        raise ValueError("Enter both Rule34 credentials, or leave both blank.")
+
+    with CONFIG_PATH.open(encoding="utf-8") as config_file:
+        config_data = json.load(config_file)
+    if not isinstance(config_data, dict):
+        raise ValueError("Configuration must be a JSON object.")
+    config_data["downloads_dir"] = downloads_dir
+    rate_limits = config_data.get("rate_limits")
+    if not isinstance(rate_limits, dict):
+        raise ValueError("Configuration field 'rate_limits' must be an object.")
+    rule34_settings = rate_limits.get("rule34", {})
+    if not isinstance(rule34_settings, dict):
+        raise ValueError("Rule34 rate limit must be an object.")
+    rule34_settings["requests_per_second"] = float(requests_per_second)
+    rate_limits["rule34"] = rule34_settings
+
+    keys_data: dict[str, Any] | None = None
+    if api_key:
+        try:
+            with current_config.keys_file.open(encoding="utf-8") as keys_file:
+                loaded_keys = json.load(keys_file)
+        except FileNotFoundError:
+            loaded_keys = {}
+        if not isinstance(loaded_keys, dict):
+            raise ValueError("Credentials file must contain a JSON object.")
+        keys_data = loaded_keys
+        services = keys_data.setdefault("services", {})
+        if not isinstance(services, dict):
+            raise ValueError("Credentials field 'services' must be an object.")
+        rule34_credentials = services.setdefault("rule34", {})
+        if not isinstance(rule34_credentials, dict):
+            raise ValueError("Rule34 credentials must be an object.")
+        rule34_credentials["api_key"] = api_key
+        rule34_credentials["user_id"] = user_id
+
+    config_temp = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".tmp")
+    keys_path = current_config.keys_file if keys_data is not None else None
+    keys_temp = keys_path.with_suffix(keys_path.suffix + ".tmp") if keys_path else None
+    try:
+        _write_json(config_temp, config_data)
+        if keys_temp is not None and keys_data is not None:
+            keys_temp.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(keys_temp, keys_data)
+        if keys_temp is not None and keys_path is not None:
+            keys_temp.replace(keys_path)
+        config_temp.replace(CONFIG_PATH)
+    except OSError:
+        config_temp.unlink(missing_ok=True)
+        if keys_temp is not None:
+            keys_temp.unlink(missing_ok=True)
+        raise
+
+    load_config(CONFIG_PATH)
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    with path.open("w", encoding="utf-8") as output:
+        json.dump(value, output, indent=2, ensure_ascii=False)
+        output.write("\n")
 
 
 def is_local_origin(
@@ -77,6 +231,22 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         if path in STATIC_FILES:
             self._serve_static(path)
             return
+        if path == "/api/config":
+            try:
+                self._send_json(200, read_public_config())
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if path == "/api/gallery":
+            try:
+                config = load_config()
+                self._send_json(200, {"items": gallery_items(config.downloads_dir)})
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if path.startswith("/api/gallery/media/"):
+            self._serve_gallery_media(path.removeprefix("/api/gallery/media/"))
+            return
         if path == "/api/tasks":
             self._send_json(405, {"error": "Use POST to start a download."})
             return
@@ -90,27 +260,16 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "Requests must originate from this local app."})
             return
         if urlsplit(self.path).path != "/api/tasks":
+            if urlsplit(self.path).path == "/api/config":
+                self._save_config()
+                return
             self._send_json(404, {"error": "Not found."})
             return
 
-        if self.headers.get_content_type() != "application/json":
-            self._send_json(415, {"error": "Send a JSON request body."})
+        payload = self._read_json_body()
+        if payload is None:
             return
-        try:
-            content_length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self._send_json(400, {"error": "A valid Content-Length header is required."})
-            return
-        if content_length < 0 or content_length > MAX_REQUEST_BYTES:
-            self._send_json(413, {"error": "Request body is too large."})
-            return
-
-        try:
-            payload = json.loads(self.rfile.read(content_length))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self._send_json(400, {"error": "Request body must be valid JSON."})
-            return
-        if not isinstance(payload, dict) or not isinstance(payload.get("tags"), str):
+        if not isinstance(payload.get("tags"), str):
             self._send_json(400, {"error": "The JSON body must contain string tags."})
             return
         tags = payload["tags"].strip()
@@ -129,6 +288,40 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             self._send_json(409, {"error": str(exc)})
         else:
             self._send_json(202, self.server.task_manager.snapshot(task))
+
+    def _save_config(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        try:
+            update_public_config(payload)
+            response = read_public_config()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        self._send_json(200, response)
+
+    def _read_json_body(self) -> dict[str, Any] | None:
+        if self.headers.get_content_type() != "application/json":
+            self._send_json(415, {"error": "Send a JSON request body."})
+            return None
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json(400, {"error": "A valid Content-Length header is required."})
+            return None
+        if content_length < 0 or content_length > MAX_REQUEST_BYTES:
+            self._send_json(413, {"error": "Request body is too large."})
+            return None
+        try:
+            payload = json.loads(self.rfile.read(content_length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(400, {"error": "Request body must be valid JSON."})
+            return None
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "Request body must be a JSON object."})
+            return None
+        return payload
 
     def do_DELETE(self) -> None:
         if not self._is_local_request(check_origin=True):
@@ -221,6 +414,42 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         self._security_headers()
         self.end_headers()
         self.wfile.write(content)
+
+    def _serve_gallery_media(self, encoded_name: str) -> None:
+        filename = unquote(encoded_name)
+        if (
+            not filename
+            or filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+            or Path(filename).suffix.lower() not in MEDIA_EXTENSIONS
+        ):
+            self._send_json(404, {"error": "Media file not found."})
+            return
+        try:
+            root = load_config().downloads_dir.resolve()
+            media_path = (root / filename).resolve(strict=True)
+            media_path.relative_to(root)
+            if not media_path.is_file():
+                raise FileNotFoundError(filename)
+            media_file = media_path.open("rb")
+        except (OSError, ValueError):
+            self._send_json(404, {"error": "Media file not found."})
+            return
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        try:
+            with media_file:
+                content_length = os.fstat(media_file.fileno()).st_size
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(content_length))
+                self.send_header("Cache-Control", "private, max-age=60")
+                self._security_headers()
+                self.end_headers()
+                while chunk := media_file.read(1024 * 128):
+                    self.wfile.write(chunk)
+        except OSError:
+            return
 
     def _is_local_request(self, check_origin: bool = False) -> bool:
         return is_local_origin(

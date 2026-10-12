@@ -9,9 +9,22 @@ const progress = document.querySelector("#progress");
 const progressLabel = document.querySelector("#progress-label");
 const progressCount = document.querySelector("#progress-count");
 const activityLog = document.querySelector("#activity-log");
+const galleryTab = document.querySelector("#gallery-tab");
+const rule34Tab = document.querySelector("#rule34-tab");
+const galleryPanel = document.querySelector("#gallery-panel");
+const rule34Panel = document.querySelector("#rule34-panel");
+const galleryGrid = document.querySelector("#gallery-grid");
+const galleryCount = document.querySelector("#gallery-count");
+const galleryError = document.querySelector("#gallery-error");
+const configButton = document.querySelector("#config-button");
+const configDialog = document.querySelector("#config-dialog");
+const configForm = document.querySelector("#config-form");
+const configError = document.querySelector("#config-error");
+const configSuccess = document.querySelector("#config-success");
 
 let currentTaskId = null;
 let eventSource = null;
+let activeTab = "gallery";
 
 function setStatus(state, label) {
   statusPill.className = `status-pill status-${state}`;
@@ -84,6 +97,7 @@ function handleEvent(event) {
       `${result.downloaded ?? 0} downloaded · ${result.skipped ?? 0} already saved · ${result.failed ?? 0} failed`,
       "log-summary",
     );
+    refreshGallery();
     stopWatching();
   } else if (item.type === "cancelled") {
     setStatus("idle", "Cancelled");
@@ -162,3 +176,186 @@ cancelButton.addEventListener("click", async () => {
     cancelButton.disabled = false;
   }
 });
+
+function selectTab(name) {
+  activeTab = name;
+  const gallerySelected = name === "gallery";
+  galleryTab.classList.toggle("active", gallerySelected);
+  rule34Tab.classList.toggle("active", !gallerySelected);
+  galleryTab.setAttribute("aria-selected", String(gallerySelected));
+  rule34Tab.setAttribute("aria-selected", String(!gallerySelected));
+  galleryTab.tabIndex = gallerySelected ? 0 : -1;
+  rule34Tab.tabIndex = gallerySelected ? -1 : 0;
+  galleryPanel.hidden = !gallerySelected;
+  rule34Panel.hidden = gallerySelected;
+  if (gallerySelected) refreshGallery();
+}
+
+galleryTab.addEventListener("click", () => selectTab("gallery"));
+rule34Tab.addEventListener("click", () => selectTab("rule34"));
+
+for (const tab of [galleryTab, rule34Tab]) {
+  tab.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = tab === galleryTab ? rule34Tab : galleryTab;
+    selectTab(next === galleryTab ? "gallery" : "rule34");
+    next.focus();
+  });
+}
+
+document.querySelector("#refresh-gallery-button").addEventListener("click", refreshGallery);
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = bytes / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+function renderGallery(items) {
+  galleryGrid.replaceChildren();
+  galleryCount.textContent = String(items.length);
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "gallery-empty card";
+    empty.innerHTML = '<span class="gallery-empty-mark" aria-hidden="true">▧</span><h2>Your gallery is empty</h2><p>Downloaded images and videos will show up here.</p><button class="button button-primary" type="button">Browse Rule34</button>';
+    empty.querySelector("button").addEventListener("click", () => {
+      selectTab("rule34");
+      rule34Tab.focus();
+    });
+    galleryGrid.append(empty);
+    return;
+  }
+
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "gallery-card";
+    const preview = document.createElement("div");
+    preview.className = "gallery-preview";
+    if (item.kind === "video") {
+      const video = document.createElement("video");
+      video.src = item.url;
+      video.preload = "metadata";
+      video.controls = true;
+      video.playsInline = true;
+      preview.append(video);
+      const type = document.createElement("span");
+      type.className = "media-type";
+      type.textContent = "VIDEO";
+      preview.append(type);
+    } else {
+      const image = document.createElement("img");
+      image.src = item.url;
+      image.alt = item.name;
+      image.loading = "lazy";
+      image.decoding = "async";
+      preview.append(image);
+    }
+    const details = document.createElement("div");
+    details.className = "gallery-details";
+    const name = document.createElement("p");
+    name.className = "gallery-name";
+    name.textContent = item.name;
+    name.title = item.name;
+    const meta = document.createElement("span");
+    meta.className = "gallery-meta";
+    meta.textContent = `${formatBytes(item.size)} · ${new Date(item.modified * 1000).toLocaleDateString()}`;
+    details.append(name, meta);
+    card.append(preview, details);
+    galleryGrid.append(card);
+  }
+}
+
+async function refreshGallery() {
+  galleryError.hidden = true;
+  try {
+    const response = await fetch("/api/gallery", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not load the gallery.");
+    renderGallery(payload.items);
+  } catch (error) {
+    galleryError.textContent = error.message;
+    galleryError.hidden = false;
+  }
+}
+
+function openConfig() {
+  configError.hidden = true;
+  configSuccess.hidden = true;
+  document.querySelector("#config-api-key").value = "";
+  document.querySelector("#config-user-id").value = "";
+  configButton.disabled = true;
+  fetch("/api/config", { cache: "no-store" })
+    .then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load settings.");
+      configForm.elements.downloads_dir.value = payload.downloads_dir;
+      configForm.elements.rule34_requests_per_second.value =
+        payload.rule34_requests_per_second;
+      document.querySelector("#credential-status").textContent =
+        payload.credentials_configured
+          ? "Credentials are saved. Leave both fields blank to keep them."
+          : "Credentials are not configured. Enter both values to enable Rule34 downloads.";
+      configDialog.showModal();
+    })
+    .catch((error) => {
+      configError.textContent = error.message;
+      configError.hidden = false;
+      configDialog.showModal();
+    })
+    .finally(() => {
+      configButton.disabled = false;
+    });
+}
+
+configButton.addEventListener("click", openConfig);
+document.querySelector("#close-config").addEventListener("click", () => configDialog.close());
+document.querySelector("#cancel-config").addEventListener("click", () => configDialog.close());
+configDialog.addEventListener("click", (event) => {
+  if (event.target === configDialog) configDialog.close();
+});
+
+configForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  configError.hidden = true;
+  configSuccess.hidden = true;
+  const saveButton = document.querySelector("#save-config");
+  saveButton.disabled = true;
+  try {
+    const response = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        downloads_dir: configForm.elements.downloads_dir.value.trim(),
+        rule34_requests_per_second: Number(
+          configForm.elements.rule34_requests_per_second.value,
+        ),
+        api_key: configForm.elements.api_key.value,
+        user_id: configForm.elements.user_id.value,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not save settings.");
+    configForm.elements.api_key.value = "";
+    configForm.elements.user_id.value = "";
+    configSuccess.hidden = false;
+    document.querySelector("#credential-status").textContent =
+      payload.credentials_configured
+        ? "Credentials are saved. Leave both fields blank to keep them."
+        : "Credentials are not configured. Enter both values to enable Rule34 downloads.";
+    await refreshGallery();
+  } catch (error) {
+    configError.textContent = error.message;
+    configError.hidden = false;
+  } finally {
+    saveButton.disabled = false;
+  }
+});
+
+selectTab(activeTab);

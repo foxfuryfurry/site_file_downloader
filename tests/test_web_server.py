@@ -4,13 +4,22 @@ import json
 import threading
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from urllib.request import Request, urlopen
 
+from app.downloader import config as downloader_config
 from app.downloader.config import AppConfig
 from app.downloader.errors import DownloadCancelled
 from app.downloader.models import DownloadProgress
 from app.downloader.services.download_tasks import DownloadTaskManager
-from app.downloader.web_server import LocalHttpServer, is_local_origin
+from app.downloader.web_server import (
+    LocalHttpServer,
+    gallery_items,
+    is_local_origin,
+    read_public_config,
+    update_public_config,
+)
 
 
 class WebServerTests(unittest.TestCase):
@@ -134,6 +143,159 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("event: update", stream)
         self.assertIn('"type":"progress"', stream)
         self.assertIn('"type":"complete"', stream)
+
+    def test_gallery_lists_and_serves_only_supported_media(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory) / "media"
+            gallery_dir.mkdir()
+            image_path = gallery_dir / "rule34_42.jpg"
+            image_path.write_bytes(b"test-image")
+            (gallery_dir / "rule34_42.json").write_text("{}", encoding="utf-8")
+            (gallery_dir / "notes.txt").write_text("ignore", encoding="utf-8")
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+            items = gallery_items(gallery_dir)
+            self.assertEqual([item["name"] for item in items], ["rule34_42.jpg"])
+            self.assertEqual(items[0]["kind"], "image")
+
+            with patch("app.downloader.web_server.load_config", return_value=configured):
+                with urlopen(
+                    f"{self.origin}/api/gallery/media/rule34_42.jpg", timeout=2
+                ) as response:
+                    self.assertEqual(response.read(), b"test-image")
+                    self.assertEqual(response.headers.get_content_type(), "image/jpeg")
+                with urlopen(f"{self.origin}/api/gallery", timeout=2) as response:
+                    self.assertEqual(json.load(response)["items"][0]["name"], "rule34_42.jpg")
+
+    def test_config_updates_preserve_history_and_existing_credentials(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.json"
+            keys_path = root / "keys.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "downloads_dir": str(root / "old-downloads"),
+                        "history_file": str(root / "history.json"),
+                        "keys_file": str(keys_path),
+                        "rate_limits": {
+                            "rule34": {"requests_per_second": 1},
+                            "another": {"requests_per_second": 2},
+                        },
+                        "kept_setting": "unchanged",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            keys_path.write_text(
+                json.dumps(
+                    {
+                        "services": {
+                            "rule34": {"api_key": "do-not-return", "user_id": "42"},
+                            "another": {"token": "keep-this"},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            temporary_config = downloader_config.load_config(config_path)
+            with (
+                patch("app.downloader.web_server.CONFIG_PATH", config_path),
+                patch("app.downloader.web_server.load_config", return_value=temporary_config),
+            ):
+                update_public_config(
+                    {
+                        "downloads_dir": str(root / "new-downloads"),
+                        "rule34_requests_per_second": 0.5,
+                        "api_key": "",
+                        "user_id": "",
+                    }
+                )
+                public = read_public_config()
+                self.assertTrue(public["credentials_configured"])
+                self.assertNotIn("do-not-return", json.dumps(public))
+                saved_config = json.loads(config_path.read_text(encoding="utf-8"))
+                saved_keys = json.loads(keys_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved_config["history_file"], str(root / "history.json"))
+                self.assertEqual(saved_config["kept_setting"], "unchanged")
+                self.assertEqual(saved_config["rate_limits"]["another"]["requests_per_second"], 2)
+                self.assertEqual(saved_keys["services"]["rule34"]["api_key"], "do-not-return")
+                self.assertEqual(saved_keys["services"]["another"]["token"], "keep-this")
+
+                update_public_config(
+                    {
+                        "downloads_dir": str(root / "new-downloads"),
+                        "rule34_requests_per_second": 0.5,
+                        "api_key": "new-secret",
+                        "user_id": "new-user",
+                    }
+                )
+                updated_keys = json.loads(keys_path.read_text(encoding="utf-8"))
+                self.assertEqual(updated_keys["services"]["rule34"]["api_key"], "new-secret")
+                self.assertEqual(updated_keys["services"]["rule34"]["user_id"], "new-user")
+
+    def test_config_rejects_partial_credentials_and_invalid_rate(self):
+        with self.assertRaisesRegex(ValueError, "both Rule34 credentials"):
+            update_public_config(
+                {
+                    "downloads_dir": "_output",
+                    "rule34_requests_per_second": 1,
+                    "api_key": "only-one",
+                    "user_id": "",
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "requests per second"):
+            update_public_config(
+                {
+                    "downloads_dir": "_output",
+                    "rule34_requests_per_second": 0,
+                    "api_key": "",
+                    "user_id": "",
+                }
+            )
+
+    def test_config_api_accepts_same_origin_updates(self):
+        request = Request(
+            self.origin + "/api/config",
+            data=json.dumps(
+                {
+                    "downloads_dir": "_output",
+                    "rule34_requests_per_second": 1,
+                    "api_key": "",
+                    "user_id": "",
+                }
+            ).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": self.origin,
+            },
+            method="POST",
+        )
+        public_settings = {
+            "downloads_dir": "_output",
+            "rule34_requests_per_second": 1,
+            "credentials_configured": True,
+        }
+        with (
+            patch("app.downloader.web_server.update_public_config") as update,
+            patch(
+                "app.downloader.web_server.read_public_config",
+                return_value=public_settings,
+            ),
+        ):
+            with urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.load(response), public_settings)
+        update.assert_called_once_with(
+            {
+                "downloads_dir": "_output",
+                "rule34_requests_per_second": 1,
+                "api_key": "",
+                "user_id": "",
+            }
+        )
 
 
 if __name__ == "__main__":

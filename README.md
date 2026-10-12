@@ -17,6 +17,12 @@ instead, run this from inside `app/`:
 python -m downloader
 ```
 
+The **Gallery** tab shows supported image and video files in the configured
+download folder. The **Rule34** tab contains the tag search and download queue.
+Use **Config** to update the download folder, Rule34 request rate, and (if
+needed) Rule34 credentials. Saved credentials are never returned to the browser;
+leave both credential fields blank to keep the existing values.
+
 Enter space-separated Rule34 tags and choose **Search and download**. The app
 fetches results in pages of up to 1,000, continuing with Rule34's `pid` until
 all matching pages have been read. New files are saved in the configured
