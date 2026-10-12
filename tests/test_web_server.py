@@ -219,6 +219,78 @@ class WebServerTests(unittest.TestCase):
                 with urlopen(f"{self.origin}/api/gallery", timeout=2) as response:
                     self.assertEqual(json.load(response)["items"][0]["name"], "rule34_42.jpg")
 
+    def test_gallery_upload_creates_sidecar_and_avoids_filename_collisions(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory) / "media"
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+
+            def upload(filename, content):
+                request = Request(
+                    f"{self.origin}/api/gallery/upload?filename={filename}",
+                    data=content,
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "Origin": self.origin,
+                    },
+                    method="POST",
+                )
+                with patch(
+                    "app.downloader.web_server.load_config",
+                    return_value=configured,
+                ):
+                    with urlopen(request, timeout=2) as response:
+                        self.assertEqual(response.status, 201)
+                        return json.load(response)
+
+            first = upload("my%20picture.png", b"first-image")
+            second = upload("my%20picture.png", b"second-image")
+
+            self.assertEqual(first["name"], "my picture.png")
+            self.assertEqual(second["name"], "my picture (1).png")
+            self.assertEqual((gallery_dir / first["name"]).read_bytes(), b"first-image")
+            self.assertEqual((gallery_dir / second["name"]).read_bytes(), b"second-image")
+            for result in (first, second):
+                metadata_path = (gallery_dir / result["name"]).with_suffix(".json")
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                self.assertEqual(metadata, result["metadata"])
+                self.assertIsNone(metadata["id"])
+                self.assertEqual(metadata["tags"], [])
+                self.assertIsNone(metadata["source"])
+                self.assertEqual(metadata["title"], "")
+                self.assertEqual(metadata["description"], "")
+                self.assertTrue(metadata["downloaded_at"].endswith("Z"))
+
+    def test_gallery_upload_rejects_unsupported_files_and_cross_origin(self):
+        unsupported = Request(
+            f"{self.origin}/api/gallery/upload?filename=notes.txt",
+            data=b"not media",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Origin": self.origin,
+            },
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(unsupported, timeout=2)
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
+
+        cross_origin = Request(
+            f"{self.origin}/api/gallery/upload?filename=valid.png",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Origin": "http://example.com",
+            },
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(cross_origin, timeout=2)
+        self.assertEqual(context.exception.code, 403)
+        context.exception.close()
+
     def test_gallery_delete_removes_media_and_metadata(self):
         with TemporaryDirectory() as directory:
             gallery_dir = Path(directory) / "media"

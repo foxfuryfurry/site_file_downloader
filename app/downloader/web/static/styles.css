@@ -82,6 +82,11 @@ input:disabled { opacity: .55; }
 .panel-heading h1 { font-size: clamp(35px, 4vw, 45px); }
 .panel-heading h1 span { color: var(--violet); }
 .panel-heading .intro-copy { margin-top: 9px; }
+.gallery-heading-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.gallery-upload-status { margin: -10px 0 14px; color: var(--mint); font-size: 11px; }
+.gallery-panel { position: relative; }
+.gallery-panel.is-dragging::after { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; border: 2px dashed #b6a2ff; border-radius: 12px; background: rgb(16 19 27 / 84%); color: #ded5ff; content: "Drop images or videos to add them to your gallery"; font-size: 15px; font-weight: 650; pointer-events: none; }
 .gallery-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
 .gallery-card { display: block; min-width: 0; padding: 0; overflow: hidden; border: 0; border-radius: 3px; background: #11141c; cursor: pointer; }
 .gallery-card:hover { outline: 2px solid #8d78d4; outline-offset: -2px; }
@@ -94,7 +99,7 @@ input:disabled { opacity: .55; }
 .gallery-empty h2 { font-size: 16px; }
 .gallery-empty p { margin: 8px 0 17px; color: var(--muted); font-size: 11px; }
 
-.gallery-dialog { width: min(1100px, calc(100% - 24px)); max-width: none; max-height: 94dvh; padding: 0; overflow: hidden; color: #f4f3f7; border: 1px solid #3b3d4a; border-radius: 16px; background: #191c26; box-shadow: 0 30px 100px rgb(0 0 0 / 60%); }
+.gallery-dialog { width: min(1100px, calc(100% - 24px)); max-width: none; height: 90dvh; padding: 0; overflow: hidden; color: #f4f3f7; border: 1px solid #3b3d4a; border-radius: 16px; background: #191c26; box-shadow: 0 30px 100px rgb(0 0 0 / 60%); }
 .gallery-dialog::backdrop { background: rgb(5 6 10 / 84%); backdrop-filter: blur(5px); }
 .gallery-viewer { display: flex; max-height: 94dvh; flex-direction: column; gap: 12px; padding: 18px; overflow: auto; }
 .gallery-viewer-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -209,6 +214,8 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 23px
   .workspace { grid-template-columns: 1fr; }
   .popular-card { padding: 20px; }
   .gallery-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .panel-heading { flex-wrap: wrap; }
+  .gallery-heading-actions { margin-left: auto; }
   .gallery-viewer { padding: 12px; }
   .gallery-viewer-content { grid-template-columns: minmax(0, 1fr); }
   .gallery-metadata-panel { max-height: none; overflow: visible; }

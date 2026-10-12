@@ -16,6 +16,10 @@ const rule34Panel = document.querySelector("#rule34-panel");
 const galleryGrid = document.querySelector("#gallery-grid");
 const galleryCount = document.querySelector("#gallery-count");
 const galleryError = document.querySelector("#gallery-error");
+const galleryUploadButton = document.querySelector("#upload-gallery-button");
+const galleryFileInput = document.querySelector("#gallery-file-input");
+const galleryUploadStatus = document.querySelector("#gallery-upload-status");
+const galleryUploadError = document.querySelector("#gallery-upload-error");
 const galleryDialog = document.querySelector("#gallery-dialog");
 const galleryViewerTitle = document.querySelector("#gallery-viewer-title");
 const galleryViewerMedia = document.querySelector("#gallery-viewer-media");
@@ -43,6 +47,8 @@ let activeTab = "gallery";
 let startingSearch = false;
 let galleryItems = [];
 let activeGalleryIndex = -1;
+let uploadingGalleryFiles = false;
+let galleryDragDepth = 0;
 
 function setStatus(state, label) {
   statusPill.className = `status-pill status-${state}`;
@@ -529,6 +535,85 @@ async function refreshGallery() {
     galleryError.hidden = false;
   }
 }
+
+async function uploadGalleryFiles(files) {
+  if (uploadingGalleryFiles || files.length === 0) return;
+  uploadingGalleryFiles = true;
+  galleryUploadButton.disabled = true;
+  galleryUploadError.hidden = true;
+  galleryUploadStatus.hidden = false;
+  const uploaded = [];
+  const failed = [];
+  try {
+    for (const [index, file] of files.entries()) {
+      galleryUploadStatus.textContent =
+        `Uploading ${index + 1} of ${files.length}: ${file.name}`;
+      try {
+        const response = await fetch(
+          `/api/gallery/upload?filename=${encodeURIComponent(file.name)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: file,
+          },
+        );
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Could not upload this file.");
+        }
+        uploaded.push(payload.name);
+      } catch (error) {
+        failed.push(`${file.name}: ${error.message}`);
+      }
+    }
+    await refreshGallery();
+    galleryUploadStatus.textContent = uploaded.length
+      ? `${uploaded.length} file${uploaded.length === 1 ? "" : "s"} added to your gallery.`
+      : "No files were uploaded.";
+    if (failed.length) {
+      galleryUploadError.textContent = failed.join(" ");
+      galleryUploadError.hidden = false;
+    }
+  } finally {
+    uploadingGalleryFiles = false;
+    galleryUploadButton.disabled = false;
+  }
+}
+
+galleryUploadButton.addEventListener("click", () => galleryFileInput.click());
+galleryFileInput.addEventListener("change", () => {
+  uploadGalleryFiles(Array.from(galleryFileInput.files || []));
+  galleryFileInput.value = "";
+});
+
+function dragHasFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+galleryPanel.addEventListener("dragenter", (event) => {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  galleryDragDepth += 1;
+  galleryPanel.classList.add("is-dragging");
+});
+galleryPanel.addEventListener("dragover", (event) => {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+galleryPanel.addEventListener("dragleave", (event) => {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  galleryDragDepth = Math.max(0, galleryDragDepth - 1);
+  if (galleryDragDepth === 0) galleryPanel.classList.remove("is-dragging");
+});
+galleryPanel.addEventListener("drop", (event) => {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  galleryDragDepth = 0;
+  galleryPanel.classList.remove("is-dragging");
+  uploadGalleryFiles(Array.from(event.dataTransfer.files));
+});
 
 document.querySelector("#close-gallery-viewer").addEventListener("click", () => {
   galleryDialog.close();

@@ -18,7 +18,11 @@ python -m downloader
 ```
 
 The **Gallery** tab shows supported image and video files in the configured
-download folder. The **Rule34** tab contains the tag search and download queue.
+download folder. Add local `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.mp4`,
+and `.webm` files with the **Add files** button or by dragging them onto the
+gallery. Each uploaded media file gets a matching JSON sidecar automatically;
+existing filenames are preserved, with a numbered suffix added if a name is
+already in use. The **Rule34** tab contains the tag search and download queue.
 Use **Config** to update the download folder, Rule34 request rate, and (if
 needed) Rule34 credentials. Saved credentials are never returned to the browser;
 leave both credential fields blank to keep the existing values.

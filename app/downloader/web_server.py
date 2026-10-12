@@ -1,5 +1,6 @@
 """Loopback-only web UI and task API, implemented with the standard library."""
 
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -9,8 +10,8 @@ from pathlib import Path
 import socket
 import tempfile
 import threading
-from typing import Any
-from urllib.parse import quote, unquote, urlsplit
+from typing import Any, BinaryIO
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 import webbrowser
 
 from .config import CONFIG_PATH, load_config
@@ -20,9 +21,11 @@ from .storage.history import top_searches
 
 STATIC_DIR = Path(__file__).with_name("web") / "static"
 MAX_REQUEST_BYTES = 16_384
+UPLOAD_CHUNK_BYTES = 1024 * 128
 MEDIA_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm",
 }
+UPLOAD_LOCK = threading.Lock()
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -76,6 +79,138 @@ def gallery_items(downloads_dir: Path) -> list[dict[str, Any]]:
             }
         )
     return sorted(items, key=lambda item: item["modified"], reverse=True)
+
+
+def upload_gallery_media(
+    downloads_dir: Path,
+    filename: str,
+    source: BinaryIO,
+    content_length: int,
+) -> tuple[str, dict[str, Any]]:
+    """Save uploaded media and a matching metadata sidecar without overwriting."""
+    invalid_characters = '<>:"/\\|?*'
+    reserved_names = {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{number}" for number in range(1, 10)),
+        *(f"LPT{number}" for number in range(1, 10)),
+    }
+    if (
+        not filename
+        or filename in {".", ".."}
+        or len(filename) > 255
+        or filename.endswith((" ", "."))
+        or any(ord(character) < 32 or character in invalid_characters for character in filename)
+        or Path(filename).name != filename
+        or Path(filename).suffix.lower() not in MEDIA_EXTENSIONS
+        or Path(filename).stem.upper() in reserved_names
+    ):
+        raise ValueError("Use a supported media file with a valid filename.")
+    if content_length <= 0:
+        raise ValueError("The uploaded file is empty.")
+
+    root = downloads_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    temporary_media_path: Path | None = None
+    temporary_metadata_path: Path | None = None
+    reserved_media_path: Path | None = None
+    reserved_metadata_path: Path | None = None
+    try:
+        remaining = content_length
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=root,
+            prefix=".gallery-upload.",
+            suffix=".tmp",
+            delete=False,
+        ) as media_file:
+            temporary_media_path = Path(media_file.name)
+            while remaining:
+                chunk = source.read(min(UPLOAD_CHUNK_BYTES, remaining))
+                if not chunk:
+                    raise ValueError("The upload ended before the whole file was received.")
+                media_file.write(chunk)
+                remaining -= len(chunk)
+
+        metadata = {
+            "id": None,
+            "tags": [],
+            "source": None,
+            "title": "",
+            "description": "",
+            "downloaded_at": datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=root,
+            prefix=".gallery-upload.",
+            suffix=".json.tmp",
+            delete=False,
+        ) as metadata_file:
+            temporary_metadata_path = Path(metadata_file.name)
+            json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
+            metadata_file.write("\n")
+
+        original_path = Path(filename)
+        index = 0
+        with UPLOAD_LOCK:
+            while True:
+                candidate_name = (
+                    filename
+                    if index == 0
+                    else f"{original_path.stem} ({index}){original_path.suffix}"
+                )
+                destination = root / candidate_name
+                metadata_destination = destination.with_suffix(".json")
+                same_stem_media_exists = any(
+                    entry.stem.casefold() == destination.stem.casefold()
+                    and entry.suffix.lower() in MEDIA_EXTENSIONS
+                    for entry in root.iterdir()
+                )
+                if (
+                    same_stem_media_exists
+                    or destination.exists()
+                    or destination.is_symlink()
+                    or metadata_destination.exists()
+                    or metadata_destination.is_symlink()
+                ):
+                    index += 1
+                    continue
+                try:
+                    with destination.open("xb"):
+                        pass
+                except FileExistsError:
+                    index += 1
+                    continue
+                reserved_media_path = destination
+                try:
+                    with metadata_destination.open("xb"):
+                        pass
+                except FileExistsError:
+                    destination.unlink()
+                    reserved_media_path = None
+                    index += 1
+                    continue
+                reserved_metadata_path = metadata_destination
+                temporary_media_path.replace(destination)
+                temporary_media_path = None
+                temporary_metadata_path.replace(metadata_destination)
+                temporary_metadata_path = None
+                reserved_media_path = None
+                reserved_metadata_path = None
+                return candidate_name, metadata
+    except (OSError, TypeError, ValueError):
+        if temporary_media_path is not None:
+            temporary_media_path.unlink(missing_ok=True)
+        if temporary_metadata_path is not None:
+            temporary_metadata_path.unlink(missing_ok=True)
+        if reserved_media_path is not None:
+            reserved_media_path.unlink(missing_ok=True)
+        if reserved_metadata_path is not None:
+            reserved_metadata_path.unlink(missing_ok=True)
+        raise
 
 
 def delete_gallery_media(downloads_dir: Path, filename: str) -> None:
@@ -387,9 +522,13 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         if not self._is_local_request(check_origin=True):
             self._send_json(403, {"error": "Requests must originate from this local app."})
             return
-        if urlsplit(self.path).path != "/api/tasks":
-            if urlsplit(self.path).path == "/api/config":
+        request_url = urlsplit(self.path)
+        if request_url.path != "/api/tasks":
+            if request_url.path == "/api/config":
                 self._save_config()
+                return
+            if request_url.path == "/api/gallery/upload":
+                self._upload_gallery_media(request_url.query)
                 return
             self._send_json(404, {"error": "Not found."})
             return
@@ -416,6 +555,38 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             self._send_json(409, {"error": str(exc)})
         else:
             self._send_json(202, self.server.task_manager.snapshot(task))
+
+    def _upload_gallery_media(self, query: str) -> None:
+        if self.headers.get_content_type() != "application/octet-stream":
+            self._send_json(415, {"error": "Send the file as application/octet-stream."})
+            return
+        filenames = parse_qs(query, keep_blank_values=True).get("filename", [])
+        if len(filenames) != 1:
+            self._send_json(400, {"error": "Provide exactly one filename."})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json(400, {"error": "A valid Content-Length header is required."})
+            return
+        if content_length < 0:
+            self._send_json(400, {"error": "Content-Length must be non-negative."})
+            return
+
+        try:
+            config = load_config()
+            filename, metadata = upload_gallery_media(
+                config.downloads_dir,
+                filenames[0],
+                self.rfile,
+                content_length,
+            )
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except OSError as exc:
+            self._send_json(500, {"error": f"Could not save uploaded media: {exc}"})
+        else:
+            self._send_json(201, {"name": filename, "metadata": metadata})
 
     def do_PATCH(self) -> None:
         if not self._is_local_request(check_origin=True):
