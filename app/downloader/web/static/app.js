@@ -16,6 +16,17 @@ const rule34Panel = document.querySelector("#rule34-panel");
 const galleryGrid = document.querySelector("#gallery-grid");
 const galleryCount = document.querySelector("#gallery-count");
 const galleryError = document.querySelector("#gallery-error");
+const galleryDialog = document.querySelector("#gallery-dialog");
+const galleryViewerTitle = document.querySelector("#gallery-viewer-title");
+const galleryViewerMedia = document.querySelector("#gallery-viewer-media");
+const galleryFileDetails = document.querySelector("#gallery-file-details");
+const galleryMetadataForm = document.querySelector("#gallery-metadata-form");
+const galleryTitleInput = document.querySelector("#gallery-title-input");
+const galleryDescriptionInput = document.querySelector("#gallery-description-input");
+const galleryMetadataStatus = document.querySelector("#gallery-metadata-status");
+const galleryCarousel = document.querySelector("#gallery-carousel");
+const galleryViewerError = document.querySelector("#gallery-viewer-error");
+const deleteGalleryItemButton = document.querySelector("#delete-gallery-item");
 const configButton = document.querySelector("#config-button");
 const configDialog = document.querySelector("#config-dialog");
 const configForm = document.querySelector("#config-form");
@@ -28,6 +39,8 @@ let currentTaskId = null;
 let eventSource = null;
 let activeTab = "gallery";
 let startingSearch = false;
+let galleryItems = [];
+let activeGalleryIndex = -1;
 
 function setStatus(state, label) {
   statusPill.className = `status-pill status-${state}`;
@@ -280,6 +293,10 @@ function formatBytes(bytes) {
 }
 
 function renderGallery(items) {
+  const activeName = galleryDialog.open
+    ? galleryItems[activeGalleryIndex]?.name
+    : null;
+  galleryItems = items;
   galleryGrid.replaceChildren();
   galleryCount.textContent = String(items.length);
   if (items.length === 0) {
@@ -291,46 +308,164 @@ function renderGallery(items) {
       rule34Tab.focus();
     });
     galleryGrid.append(empty);
+    if (galleryDialog.open) {
+      galleryDialog.close();
+      activeGalleryIndex = -1;
+    }
     return;
   }
 
   for (const item of items) {
-    const card = document.createElement("article");
+    const card = document.createElement("button");
     card.className = "gallery-card";
-    const preview = document.createElement("div");
+    card.type = "button";
+    card.setAttribute("aria-label", `Open ${item.name}`);
+    card.addEventListener("click", () => openGalleryItem(items.indexOf(item)));
+    const preview = document.createElement("span");
     preview.className = "gallery-preview";
     if (item.kind === "video") {
       const video = document.createElement("video");
       video.src = item.url;
       video.preload = "metadata";
-      video.controls = true;
+      video.autoplay = true;
+      video.loop = true;
+      video.muted = true;
       video.playsInline = true;
       preview.append(video);
-      const type = document.createElement("span");
-      type.className = "media-type";
-      type.textContent = "VIDEO";
-      preview.append(type);
     } else {
       const image = document.createElement("img");
       image.src = item.url;
-      image.alt = item.name;
+      image.alt = "";
       image.loading = "lazy";
       image.decoding = "async";
       preview.append(image);
     }
-    const details = document.createElement("div");
-    details.className = "gallery-details";
-    const name = document.createElement("p");
-    name.className = "gallery-name";
-    name.textContent = item.name;
-    name.title = item.name;
-    const meta = document.createElement("span");
-    meta.className = "gallery-meta";
-    meta.textContent = `${formatBytes(item.size)} · ${new Date(item.modified * 1000).toLocaleDateString()}`;
-    details.append(name, meta);
-    card.append(preview, details);
+    card.append(preview);
     galleryGrid.append(card);
   }
+
+  if (galleryDialog.open) {
+    const updatedIndex = galleryItems.findIndex((item) => item.name === activeName);
+    if (updatedIndex < 0) {
+      galleryDialog.close();
+    } else {
+      activeGalleryIndex = updatedIndex;
+      renderGalleryViewer();
+    }
+  }
+}
+
+function addGalleryDetail(label, value) {
+  const row = document.createElement("div");
+  row.className = "gallery-detail-row";
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const description = document.createElement("dd");
+  description.textContent = value;
+  row.append(term, description);
+  galleryFileDetails.append(row);
+}
+
+function formatIsoDate(value) {
+  if (typeof value !== "string") return "Unknown";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown" : date.toISOString();
+}
+
+function renderGalleryViewer() {
+  const item = galleryItems[activeGalleryIndex];
+  if (!item) return;
+
+  galleryViewerError.hidden = true;
+  galleryMetadataStatus.textContent = "";
+  galleryViewerTitle.textContent = item.name;
+  galleryViewerMedia.replaceChildren();
+  galleryFileDetails.replaceChildren();
+
+  if (item.kind === "video") {
+    const video = document.createElement("video");
+    video.src = item.url;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    galleryViewerMedia.append(video);
+  } else {
+    const image = document.createElement("img");
+    image.src = item.url;
+    image.alt = item.name;
+    galleryViewerMedia.append(image);
+  }
+
+  addGalleryDetail("File name", item.name);
+  addGalleryDetail("Size", formatBytes(item.size));
+  addGalleryDetail("File modified date (ISO 8601 UTC)", new Date(item.modified * 1000).toISOString());
+  const metadata = item.metadata || {};
+  addGalleryDetail("Download date/time (ISO 8601 UTC)", formatIsoDate(metadata.downloaded_at));
+  if (item.metadata && Object.keys(item.metadata).length > 0) {
+    for (const [key, value] of Object.entries(item.metadata)) {
+      if (["title", "description", "downloaded_at"].includes(key)) continue;
+      const formattedValue =
+        typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      addGalleryDetail(key, formattedValue);
+    }
+  } else {
+    addGalleryDetail(
+      "Additional information",
+      item.metadata_error || "No additional metadata.",
+    );
+  }
+  galleryTitleInput.value =
+    typeof metadata.title === "string" ? metadata.title : "";
+  galleryDescriptionInput.value =
+    typeof metadata.description === "string" ? metadata.description : "";
+
+  galleryCarousel.replaceChildren();
+  galleryItems.forEach((carouselItem, index) => {
+    const button = document.createElement("button");
+    button.className = "gallery-carousel-item";
+    button.type = "button";
+    button.setAttribute("aria-label", `Open ${carouselItem.name}`);
+    button.setAttribute("aria-current", String(index === activeGalleryIndex));
+    if (index === activeGalleryIndex) button.classList.add("active");
+    button.addEventListener("click", () => {
+      activeGalleryIndex = index;
+      renderGalleryViewer();
+    });
+    if (carouselItem.kind === "video") {
+      const video = document.createElement("video");
+      video.src = carouselItem.url;
+      video.preload = "metadata";
+      video.muted = true;
+      button.append(video);
+    } else {
+      const image = document.createElement("img");
+      image.src = carouselItem.url;
+      image.alt = "";
+      image.loading = "lazy";
+      button.append(image);
+    }
+    galleryCarousel.append(button);
+  });
+
+  const activeThumbnail = galleryCarousel.querySelector(".active");
+  activeThumbnail?.scrollIntoView({ block: "nearest", inline: "center" });
+  document.querySelector("#gallery-previous").disabled =
+    galleryItems.length < 2;
+  document.querySelector("#gallery-next").disabled = galleryItems.length < 2;
+}
+
+function openGalleryItem(index) {
+  if (index < 0 || index >= galleryItems.length) return;
+  activeGalleryIndex = index;
+  renderGalleryViewer();
+  if (!galleryDialog.open) galleryDialog.showModal();
+}
+
+function moveGalleryViewer(direction) {
+  if (galleryItems.length < 2) return;
+  activeGalleryIndex =
+    (activeGalleryIndex + direction + galleryItems.length) % galleryItems.length;
+  renderGalleryViewer();
 }
 
 async function refreshGallery() {
@@ -345,6 +480,80 @@ async function refreshGallery() {
     galleryError.hidden = false;
   }
 }
+
+document.querySelector("#close-gallery-viewer").addEventListener("click", () => {
+  galleryDialog.close();
+});
+galleryDialog.addEventListener("click", (event) => {
+  if (event.target === galleryDialog) galleryDialog.close();
+});
+document.querySelector("#gallery-previous").addEventListener("click", () => {
+  moveGalleryViewer(-1);
+});
+document.querySelector("#gallery-next").addEventListener("click", () => {
+  moveGalleryViewer(1);
+});
+galleryMetadataForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const item = galleryItems[activeGalleryIndex];
+  if (!item) return;
+
+  const saveButton = document.querySelector("#save-gallery-metadata");
+  galleryViewerError.hidden = true;
+  saveButton.disabled = true;
+  try {
+    const response = await fetch(item.url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: galleryTitleInput.value,
+        description: galleryDescriptionInput.value,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not save these details.");
+    }
+    item.metadata = payload.metadata;
+    item.metadata_error = "";
+    renderGalleryViewer();
+    galleryMetadataStatus.textContent = "Details saved.";
+  } catch (error) {
+    galleryViewerError.textContent = error.message;
+    galleryViewerError.hidden = false;
+  } finally {
+    saveButton.disabled = false;
+  }
+});
+galleryDialog.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    moveGalleryViewer(-1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    moveGalleryViewer(1);
+  }
+});
+deleteGalleryItemButton.addEventListener("click", async () => {
+  const item = galleryItems[activeGalleryIndex];
+  if (!item) return;
+  if (!window.confirm(`Delete ${item.name} and its metadata file?`)) return;
+
+  galleryViewerError.hidden = true;
+  deleteGalleryItemButton.disabled = true;
+  try {
+    const response = await fetch(item.url, { method: "DELETE" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not delete this file.");
+    galleryDialog.close();
+    await refreshGallery();
+  } catch (error) {
+    galleryViewerError.textContent = error.message;
+    galleryViewerError.hidden = false;
+  } finally {
+    deleteGalleryItemButton.disabled = false;
+  }
+});
 
 function openConfig() {
   configError.hidden = true;

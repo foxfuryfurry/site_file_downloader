@@ -1,5 +1,6 @@
 """Filesystem operations for downloaded files."""
 
+from datetime import datetime, timezone
 import json
 import threading
 from pathlib import Path
@@ -38,6 +39,11 @@ def save_post(
             "id": post.raw_data.get("id", post.post_id),
             "tags": raw_tags.split(),
             "source": post.raw_data.get("source"),
+            "title": "",
+            "description": "",
+            "downloaded_at": datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
         }
         with temporary_metadata_path.open("w", encoding="utf-8") as metadata_file:
             json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)

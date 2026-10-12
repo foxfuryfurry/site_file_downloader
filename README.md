@@ -28,9 +28,14 @@ download**. The app fetches results in pages of up to 1,000, continuing with
 Rule34's `pid` until all matching pages have been read. New files are saved in
 the configured download folder, and completed post IDs are recorded in history
 so they are skipped on later searches. Each media file also gets a `.json`
-sidecar with only the post `id`, `tags` (as a list), and `source`, using the
-same base filename (for example, `rule34_123.jpg` and `rule34_123.json`). The
-Rule34 API response does not provide the post's displayed "Posted" date.
+sidecar using the same base filename (for example, `rule34_123.jpg` and
+`rule34_123.json`). The sidecar stores the post `id`, `tags` (as a list),
+`source`, editable `title` and `description`, and `downloaded_at` as an
+ISO-8601 UTC timestamp recorded when the download completes. The Gallery's
+full view shows these fields, and title/description edits are saved to the
+sidecar. The Rule34 API response does not provide the post's displayed
+"Posted" date; older files without `downloaded_at` show an unknown download
+time rather than an estimated file modification time.
 
 The browser UI is bundled with the Python package and makes no third-party
 requests. The local server binds only to `127.0.0.1`; downloads themselves

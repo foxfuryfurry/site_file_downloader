@@ -159,5 +159,37 @@
         </div>
       </form>
     </dialog>
+
+    <dialog id="gallery-dialog" class="gallery-dialog" aria-labelledby="gallery-viewer-title">
+      <div class="gallery-viewer">
+        <div class="gallery-viewer-heading">
+          <h2 id="gallery-viewer-title"></h2>
+          <button id="close-gallery-viewer" class="icon-button" type="button" aria-label="Close image viewer">×</button>
+        </div>
+        <p id="gallery-viewer-error" class="inline-error" role="alert" hidden></p>
+        <div class="gallery-media-stage">
+          <button id="gallery-previous" class="gallery-nav-button" type="button" aria-label="Previous media">‹</button>
+          <div id="gallery-viewer-media" class="gallery-viewer-media"></div>
+          <button id="gallery-next" class="gallery-nav-button" type="button" aria-label="Next media">›</button>
+        </div>
+        <section class="gallery-file-info" aria-label="File information">
+          <dl id="gallery-file-details"></dl>
+        </section>
+        <form id="gallery-metadata-form" class="gallery-metadata-form">
+          <label for="gallery-title-input">Title</label>
+          <input id="gallery-title-input" name="title" type="text">
+          <label for="gallery-description-input">Description</label>
+          <textarea id="gallery-description-input" name="description" rows="3"></textarea>
+          <div class="gallery-metadata-actions">
+            <p id="gallery-metadata-status" role="status"></p>
+            <button id="save-gallery-metadata" class="button button-refresh" type="submit">Save details</button>
+          </div>
+        </form>
+        <div class="gallery-viewer-actions">
+          <button id="delete-gallery-item" class="button button-danger" type="button">Delete file</button>
+        </div>
+        <div id="gallery-carousel" class="gallery-carousel" role="group" aria-label="Gallery carousel"></div>
+      </div>
+    </dialog>
   </body>
 </html>

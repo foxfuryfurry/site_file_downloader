@@ -7,6 +7,7 @@ import mimetypes
 import os
 from pathlib import Path
 import socket
+import tempfile
 import threading
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
@@ -46,6 +47,23 @@ def gallery_items(downloads_dir: Path) -> list[dict[str, Any]]:
             details = resolved_path.stat()
         except (OSError, ValueError):
             continue
+        metadata = None
+        metadata_error = "Metadata file is missing."
+        metadata_path = path.with_suffix(".json")
+        try:
+            resolved_metadata_path = metadata_path.resolve(strict=True)
+            resolved_metadata_path.relative_to(root)
+            with resolved_metadata_path.open(encoding="utf-8") as metadata_file:
+                metadata = json.load(metadata_file)
+            if not isinstance(metadata, dict):
+                metadata = None
+                metadata_error = "Metadata file must contain a JSON object."
+            else:
+                metadata_error = ""
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, json.JSONDecodeError):
+            metadata_error = "Metadata file is invalid or unavailable."
         items.append(
             {
                 "name": path.name,
@@ -53,9 +71,96 @@ def gallery_items(downloads_dir: Path) -> list[dict[str, Any]]:
                 "kind": "video" if path.suffix.lower() in {".mp4", ".webm"} else "image",
                 "size": details.st_size,
                 "modified": details.st_mtime,
+                "metadata": metadata,
+                "metadata_error": metadata_error,
             }
         )
     return sorted(items, key=lambda item: item["modified"], reverse=True)
+
+
+def delete_gallery_media(downloads_dir: Path, filename: str) -> None:
+    """Delete one media file and its JSON sidecar from the configured folder."""
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or Path(filename).suffix.lower() not in MEDIA_EXTENSIONS
+    ):
+        raise FileNotFoundError("Media file not found.")
+    root = downloads_dir.resolve()
+    media_path = root / filename
+    resolved_media_path = media_path.resolve(strict=True)
+    try:
+        resolved_media_path.relative_to(root)
+    except ValueError as exc:
+        raise FileNotFoundError("Media file not found.") from exc
+    if not resolved_media_path.is_file():
+        raise FileNotFoundError("Media file not found.")
+    media_path.unlink()
+    media_path.with_suffix(".json").unlink(missing_ok=True)
+
+
+def update_gallery_metadata(
+    downloads_dir: Path, filename: str, title: str, description: str
+) -> dict[str, Any]:
+    """Persist editable Gallery fields to a media file's JSON sidecar."""
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or Path(filename).suffix.lower() not in MEDIA_EXTENSIONS
+    ):
+        raise FileNotFoundError("Media file not found.")
+
+    root = downloads_dir.resolve()
+    media_path = root / filename
+    resolved_media_path = media_path.resolve(strict=True)
+    try:
+        resolved_media_path.relative_to(root)
+    except ValueError as exc:
+        raise FileNotFoundError("Media file not found.") from exc
+    if not resolved_media_path.is_file():
+        raise FileNotFoundError("Media file not found.")
+
+    metadata_path = media_path.with_suffix(".json")
+    temporary_metadata_path: Path | None = None
+    try:
+        if metadata_path.exists():
+            resolved_metadata_path = metadata_path.resolve(strict=True)
+            resolved_metadata_path.relative_to(root)
+            with resolved_metadata_path.open(encoding="utf-8") as metadata_file:
+                metadata = json.load(metadata_file)
+            if not isinstance(metadata, dict):
+                raise ValueError("Metadata sidecar must contain a JSON object.")
+        else:
+            metadata = {
+                "id": None,
+                "tags": [],
+                "source": None,
+                "downloaded_at": None,
+            }
+
+        metadata["title"] = title
+        metadata["description"] = description
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=root,
+            prefix=f".{metadata_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as metadata_file:
+            temporary_metadata_path = Path(metadata_file.name)
+            json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
+            metadata_file.write("\n")
+        temporary_metadata_path.replace(metadata_path)
+    except (OSError, TypeError, ValueError):
+        if temporary_metadata_path is not None:
+            temporary_metadata_path.unlink(missing_ok=True)
+        raise
+    return metadata
 
 
 def read_public_config() -> dict[str, Any]:
@@ -300,6 +405,49 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(202, self.server.task_manager.snapshot(task))
 
+    def do_PATCH(self) -> None:
+        if not self._is_local_request(check_origin=True):
+            self._send_json(403, {"error": "Requests must originate from this local app."})
+            return
+
+        path = urlsplit(self.path).path
+        gallery_prefix = "/api/gallery/media/"
+        encoded_name = path.removeprefix(gallery_prefix) if path.startswith(gallery_prefix) else ""
+        if not encoded_name or "/" in encoded_name:
+            self._send_json(404, {"error": "Media file not found."})
+            return
+
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        if (
+            set(payload) != {"title", "description"}
+            or not isinstance(payload["title"], str)
+            or not isinstance(payload["description"], str)
+        ):
+            self._send_json(
+                400,
+                {"error": "The JSON body must contain string title and description fields only."},
+            )
+            return
+
+        try:
+            config = load_config()
+            metadata = update_gallery_metadata(
+                config.downloads_dir,
+                unquote(encoded_name),
+                payload["title"],
+                payload["description"],
+            )
+        except FileNotFoundError:
+            self._send_json(404, {"error": "Media file not found."})
+        except ValueError as exc:
+            self._send_json(409, {"error": f"Could not update metadata: {exc}"})
+        except OSError as exc:
+            self._send_json(500, {"error": f"Could not update metadata: {exc}"})
+        else:
+            self._send_json(200, {"metadata": metadata})
+
     def _save_config(self) -> None:
         payload = self._read_json_body()
         if payload is None:
@@ -340,6 +488,23 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             return
 
         path = urlsplit(self.path).path
+        gallery_prefix = "/api/gallery/media/"
+        if path.startswith(gallery_prefix):
+            encoded_name = path.removeprefix(gallery_prefix)
+            if not encoded_name or "/" in encoded_name:
+                self._send_json(404, {"error": "Media file not found."})
+                return
+            try:
+                config = load_config()
+                delete_gallery_media(config.downloads_dir, unquote(encoded_name))
+            except FileNotFoundError:
+                self._send_json(404, {"error": "Media file not found."})
+            except (OSError, ValueError) as exc:
+                self._send_json(500, {"error": f"Could not delete media file: {exc}"})
+            else:
+                self._send_json(200, {"deleted": True})
+            return
+
         prefix = "/api/tasks/"
         task_id = path[len(prefix) :] if path.startswith(prefix) else ""
         if not task_id or "/" in task_id:

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from app.downloader import config as downloader_config
@@ -18,6 +19,7 @@ from app.downloader.web_server import (
     gallery_items,
     is_local_origin,
     read_public_config,
+    update_gallery_metadata,
     update_public_config,
 )
 
@@ -186,7 +188,10 @@ class WebServerTests(unittest.TestCase):
             gallery_dir.mkdir()
             image_path = gallery_dir / "rule34_42.jpg"
             image_path.write_bytes(b"test-image")
-            (gallery_dir / "rule34_42.json").write_text("{}", encoding="utf-8")
+            (gallery_dir / "rule34_42.json").write_text(
+                json.dumps({"id": 42, "tags": ["sample"], "source": None}),
+                encoding="utf-8",
+            )
             (gallery_dir / "notes.txt").write_text("ignore", encoding="utf-8")
             configured = AppConfig(
                 gallery_dir, Path(directory) / "history.json",
@@ -195,6 +200,15 @@ class WebServerTests(unittest.TestCase):
             items = gallery_items(gallery_dir)
             self.assertEqual([item["name"] for item in items], ["rule34_42.jpg"])
             self.assertEqual(items[0]["kind"], "image")
+            self.assertEqual(
+                items[0]["metadata"],
+                {
+                    "id": 42,
+                    "tags": ["sample"],
+                    "source": None,
+                },
+            )
+            self.assertEqual(items[0]["metadata_error"], "")
 
             with patch("app.downloader.web_server.load_config", return_value=configured):
                 with urlopen(
@@ -204,6 +218,177 @@ class WebServerTests(unittest.TestCase):
                     self.assertEqual(response.headers.get_content_type(), "image/jpeg")
                 with urlopen(f"{self.origin}/api/gallery", timeout=2) as response:
                     self.assertEqual(json.load(response)["items"][0]["name"], "rule34_42.jpg")
+
+    def test_gallery_delete_removes_media_and_metadata(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory) / "media"
+            gallery_dir.mkdir()
+            image_path = gallery_dir / "rule34_42.jpg"
+            metadata_path = gallery_dir / "rule34_42.json"
+            image_path.write_bytes(b"test-image")
+            metadata_path.write_text('{"id": 42}', encoding="utf-8")
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+            request = Request(
+                f"{self.origin}/api/gallery/media/rule34_42.jpg",
+                headers={"Origin": self.origin},
+                method="DELETE",
+            )
+            with patch("app.downloader.web_server.load_config", return_value=configured):
+                with urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.load(response), {"deleted": True})
+
+            self.assertFalse(image_path.exists())
+            self.assertFalse(metadata_path.exists())
+
+    def test_gallery_metadata_update_preserves_existing_fields(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory)
+            media_path = gallery_dir / "rule34_42.jpg"
+            metadata_path = gallery_dir / "rule34_42.json"
+            media_path.write_bytes(b"image")
+            original = {
+                "id": 42,
+                "tags": ["sample", "tag"],
+                "source": "https://example.org/post/42",
+                "downloaded_at": "2026-10-12T19:00:00Z",
+            }
+            metadata_path.write_text(json.dumps(original), encoding="utf-8")
+
+            updated = update_gallery_metadata(
+                gallery_dir, media_path.name, "A title", "A description"
+            )
+
+            self.assertEqual(
+                updated,
+                {
+                    **original,
+                    "title": "A title",
+                    "description": "A description",
+                },
+            )
+            self.assertEqual(
+                json.loads(metadata_path.read_text(encoding="utf-8")), updated
+            )
+            self.assertEqual(list(gallery_dir.glob(".rule34_42.json.*.tmp")), [])
+
+    def test_gallery_metadata_update_creates_sidecar_for_legacy_media(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory)
+            media_path = gallery_dir / "legacy.jpg"
+            media_path.write_bytes(b"image")
+
+            updated = update_gallery_metadata(
+                gallery_dir, media_path.name, "Legacy title", ""
+            )
+
+            self.assertEqual(updated["title"], "Legacy title")
+            self.assertEqual(updated["description"], "")
+            self.assertIsNone(updated["downloaded_at"])
+
+    def test_gallery_metadata_patch_api_persists_edits(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory)
+            media_path = gallery_dir / "rule34_42.jpg"
+            metadata_path = gallery_dir / "rule34_42.json"
+            media_path.write_bytes(b"image")
+            metadata_path.write_text(
+                json.dumps({"id": 42, "tags": ["sample"], "source": None}),
+                encoding="utf-8",
+            )
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+            request = Request(
+                f"{self.origin}/api/gallery/media/rule34_42.jpg",
+                data=json.dumps(
+                    {"title": "Updated title", "description": "Updated description"}
+                ).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": self.origin,
+                },
+                method="PATCH",
+            )
+            with patch("app.downloader.web_server.load_config", return_value=configured):
+                with urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    metadata = json.load(response)["metadata"]
+
+            self.assertEqual(metadata["id"], 42)
+            self.assertEqual(metadata["tags"], ["sample"])
+            self.assertEqual(metadata["title"], "Updated title")
+            self.assertEqual(metadata["description"], "Updated description")
+            self.assertEqual(
+                json.loads(metadata_path.read_text(encoding="utf-8")), metadata
+            )
+
+    def test_gallery_metadata_patch_rejects_cross_origin_requests(self):
+        request = Request(
+            f"{self.origin}/api/gallery/media/rule34_42.jpg",
+            data=json.dumps({"title": "No", "description": ""}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://example.com",
+            },
+            method="PATCH",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=2)
+        self.assertEqual(context.exception.code, 403)
+        context.exception.close()
+
+    def test_gallery_metadata_patch_rejects_unexpected_fields(self):
+        request = Request(
+            f"{self.origin}/api/gallery/media/rule34_42.jpg",
+            data=json.dumps(
+                {"title": "No", "description": "", "id": 100}
+            ).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": self.origin,
+            },
+            method="PATCH",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=2)
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
+
+    def test_gallery_delete_rejects_cross_origin_requests(self):
+        request = Request(
+            f"{self.origin}/api/gallery/media/rule34_42.jpg",
+            headers={"Origin": "http://example.com"},
+            method="DELETE",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=2)
+        self.assertEqual(context.exception.code, 403)
+        context.exception.close()
+
+    def test_gallery_items_report_unavailable_sidecars(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory)
+            (gallery_dir / "missing.jpg").write_bytes(b"image")
+            (gallery_dir / "invalid.png").write_bytes(b"image")
+            (gallery_dir / "invalid.json").write_text("{", encoding="utf-8")
+
+            items = {item["name"]: item for item in gallery_items(gallery_dir)}
+
+        self.assertIsNone(items["missing.jpg"]["metadata"])
+        self.assertEqual(
+            items["missing.jpg"]["metadata_error"],
+            "Metadata file is missing.",
+        )
+        self.assertIsNone(items["invalid.png"]["metadata"])
+        self.assertEqual(
+            items["invalid.png"]["metadata_error"],
+            "Metadata file is invalid or unavailable.",
+        )
 
     def test_config_updates_preserve_history_and_existing_credentials(self):
         with TemporaryDirectory() as directory:

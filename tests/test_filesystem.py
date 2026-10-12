@@ -3,6 +3,7 @@
 import json
 import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -47,12 +48,31 @@ class FilesystemTests(unittest.TestCase):
             self.assertEqual(metadata_path.name, "rule34_123.json")
             self.assertEqual(media_path.read_bytes(), b"media")
             self.assertEqual(
-                json.loads(metadata_path.read_text(encoding="utf-8")),
+                {
+                    key: value
+                    for key, value in json.loads(
+                        metadata_path.read_text(encoding="utf-8")
+                    ).items()
+                    if key != "downloaded_at"
+                },
                 {
                     "id": 123,
                     "tags": ["artist", "character"],
                     "source": "https://example.org/post/123",
+                    "title": "",
+                    "description": "",
                 },
+            )
+            downloaded_at = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )["downloaded_at"]
+            self.assertTrue(downloaded_at.endswith("Z"))
+            downloaded_at_datetime = datetime.fromisoformat(
+                downloaded_at.replace("Z", "+00:00")
+            )
+            self.assertEqual(
+                downloaded_at_datetime.utcoffset(),
+                timezone.utc.utcoffset(None),
             )
             self.assertFalse(list(Path(directory).glob("*.part")))
 
