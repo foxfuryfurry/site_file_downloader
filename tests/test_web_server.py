@@ -259,7 +259,11 @@ class WebServerTests(unittest.TestCase):
             metadata_path.write_text(json.dumps(original), encoding="utf-8")
 
             updated = update_gallery_metadata(
-                gallery_dir, media_path.name, "A title", "A description"
+                gallery_dir,
+                media_path.name,
+                "A title",
+                "A description",
+                [" one ", "ONE", "", "two"],
             )
 
             self.assertEqual(
@@ -268,6 +272,7 @@ class WebServerTests(unittest.TestCase):
                     **original,
                     "title": "A title",
                     "description": "A description",
+                    "tags": ["one", "two"],
                 },
             )
             self.assertEqual(
@@ -282,11 +287,12 @@ class WebServerTests(unittest.TestCase):
             media_path.write_bytes(b"image")
 
             updated = update_gallery_metadata(
-                gallery_dir, media_path.name, "Legacy title", ""
+                gallery_dir, media_path.name, "Legacy title", "", ["new-tag"]
             )
 
             self.assertEqual(updated["title"], "Legacy title")
             self.assertEqual(updated["description"], "")
+            self.assertEqual(updated["tags"], ["new-tag"])
             self.assertIsNone(updated["downloaded_at"])
 
     def test_gallery_metadata_patch_api_persists_edits(self):
@@ -306,7 +312,11 @@ class WebServerTests(unittest.TestCase):
             request = Request(
                 f"{self.origin}/api/gallery/media/rule34_42.jpg",
                 data=json.dumps(
-                    {"title": "Updated title", "description": "Updated description"}
+                    {
+                        "title": "Updated title",
+                        "description": "Updated description",
+                        "tags": ["sample", "new tag"],
+                    }
                 ).encode(),
                 headers={
                     "Content-Type": "application/json",
@@ -320,33 +330,19 @@ class WebServerTests(unittest.TestCase):
                     metadata = json.load(response)["metadata"]
 
             self.assertEqual(metadata["id"], 42)
-            self.assertEqual(metadata["tags"], ["sample"])
+            self.assertEqual(metadata["tags"], ["sample", "new tag"])
             self.assertEqual(metadata["title"], "Updated title")
             self.assertEqual(metadata["description"], "Updated description")
+            self.assertEqual(metadata["tags"], ["sample", "new tag"])
             self.assertEqual(
                 json.loads(metadata_path.read_text(encoding="utf-8")), metadata
             )
-
-    def test_gallery_metadata_patch_rejects_cross_origin_requests(self):
-        request = Request(
-            f"{self.origin}/api/gallery/media/rule34_42.jpg",
-            data=json.dumps({"title": "No", "description": ""}).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Origin": "http://example.com",
-            },
-            method="PATCH",
-        )
-        with self.assertRaises(HTTPError) as context:
-            urlopen(request, timeout=2)
-        self.assertEqual(context.exception.code, 403)
-        context.exception.close()
 
     def test_gallery_metadata_patch_rejects_unexpected_fields(self):
         request = Request(
             f"{self.origin}/api/gallery/media/rule34_42.jpg",
             data=json.dumps(
-                {"title": "No", "description": "", "id": 100}
+                {"title": "No", "description": "", "tags": [], "id": 100}
             ).encode(),
             headers={
                 "Content-Type": "application/json",

@@ -23,6 +23,8 @@ const galleryFileDetails = document.querySelector("#gallery-file-details");
 const galleryMetadataForm = document.querySelector("#gallery-metadata-form");
 const galleryTitleInput = document.querySelector("#gallery-title-input");
 const galleryDescriptionInput = document.querySelector("#gallery-description-input");
+const galleryTags = document.querySelector("#gallery-tags");
+const galleryTagInput = document.querySelector("#gallery-tag-input");
 const galleryMetadataStatus = document.querySelector("#gallery-metadata-status");
 const galleryCarousel = document.querySelector("#gallery-carousel");
 const galleryViewerError = document.querySelector("#gallery-viewer-error");
@@ -372,6 +374,51 @@ function formatIsoDate(value) {
   return Number.isNaN(date.getTime()) ? "Unknown" : date.toISOString();
 }
 
+function renderGalleryTags(tags) {
+  galleryTags.replaceChildren();
+  tags.forEach((tag, index) => {
+    const chip = document.createElement("span");
+    chip.className = "gallery-tag-chip";
+    const text = document.createElement("span");
+    text.textContent = tag;
+    const remove = document.createElement("button");
+    remove.className = "gallery-tag-remove";
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove tag ${tag}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      const item = galleryItems[activeGalleryIndex];
+      const currentTags = Array.isArray(item?.metadata?.tags)
+        ? [...item.metadata.tags]
+        : [];
+      currentTags.splice(index, 1);
+      item.metadata = { ...(item.metadata || {}), tags: currentTags };
+      renderGalleryTags(currentTags);
+      galleryMetadataStatus.textContent = "Tag removed. Save details to keep the change.";
+    });
+    chip.append(text, remove);
+    galleryTags.append(chip);
+  });
+}
+
+function addGalleryTag(value) {
+  const tag = value.trim();
+  if (!tag) return;
+  const item = galleryItems[activeGalleryIndex];
+  if (!item) return;
+  const currentTags = Array.isArray(item.metadata?.tags)
+    ? [...item.metadata.tags]
+    : [];
+  if (currentTags.some((existing) => existing.toLowerCase() === tag.toLowerCase())) {
+    galleryMetadataStatus.textContent = "That tag is already listed.";
+    return;
+  }
+  currentTags.push(tag);
+  item.metadata = { ...(item.metadata || {}), tags: currentTags };
+  renderGalleryTags(currentTags);
+  galleryMetadataStatus.textContent = "Tag added. Save details to keep the change.";
+}
+
 function renderGalleryViewer() {
   const item = galleryItems[activeGalleryIndex];
   if (!item) return;
@@ -404,6 +451,7 @@ function renderGalleryViewer() {
   if (item.metadata && Object.keys(item.metadata).length > 0) {
     for (const [key, value] of Object.entries(item.metadata)) {
       if (["title", "description", "downloaded_at"].includes(key)) continue;
+      if (key === "tags") continue;
       const formattedValue =
         typeof value === "string" ? value : JSON.stringify(value, null, 2);
       addGalleryDetail(key, formattedValue);
@@ -418,6 +466,7 @@ function renderGalleryViewer() {
     typeof metadata.title === "string" ? metadata.title : "";
   galleryDescriptionInput.value =
     typeof metadata.description === "string" ? metadata.description : "";
+  renderGalleryTags(Array.isArray(metadata.tags) ? metadata.tags : []);
 
   galleryCarousel.replaceChildren();
   galleryItems.forEach((carouselItem, index) => {
@@ -508,6 +557,7 @@ galleryMetadataForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         title: galleryTitleInput.value,
         description: galleryDescriptionInput.value,
+        tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
       }),
     });
     const payload = await response.json();
@@ -523,6 +573,19 @@ galleryMetadataForm.addEventListener("submit", async (event) => {
     galleryViewerError.hidden = false;
   } finally {
     saveButton.disabled = false;
+  }
+});
+galleryTagInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addGalleryTag(galleryTagInput.value);
+    galleryTagInput.value = "";
+  } else if (
+    event.key === "Backspace" &&
+    galleryTagInput.value === "" &&
+    galleryTags.lastElementChild
+  ) {
+    galleryTags.lastElementChild.querySelector("button").click();
   }
 });
 galleryDialog.addEventListener("keydown", (event) => {

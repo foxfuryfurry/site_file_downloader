@@ -102,7 +102,11 @@ def delete_gallery_media(downloads_dir: Path, filename: str) -> None:
 
 
 def update_gallery_metadata(
-    downloads_dir: Path, filename: str, title: str, description: str
+    downloads_dir: Path,
+    filename: str,
+    title: str,
+    description: str,
+    tags: list[str],
 ) -> dict[str, Any]:
     """Persist editable Gallery fields to a media file's JSON sidecar."""
     if (
@@ -144,6 +148,14 @@ def update_gallery_metadata(
 
         metadata["title"] = title
         metadata["description"] = description
+        normalized_tags = []
+        seen_tags = set()
+        for tag in tags:
+            normalized_tag = tag.strip()
+            if normalized_tag and normalized_tag.casefold() not in seen_tags:
+                normalized_tags.append(normalized_tag)
+                seen_tags.add(normalized_tag.casefold())
+        metadata["tags"] = normalized_tags
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -421,13 +433,15 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         if payload is None:
             return
         if (
-            set(payload) != {"title", "description"}
+            set(payload) != {"title", "description", "tags"}
             or not isinstance(payload["title"], str)
             or not isinstance(payload["description"], str)
+            or not isinstance(payload.get("tags"), list)
+            or not all(isinstance(tag, str) for tag in payload["tags"])
         ):
             self._send_json(
                 400,
-                {"error": "The JSON body must contain string title and description fields only."},
+                {"error": "The JSON body must contain string title, description, and string-list tags fields only."},
             )
             return
 
@@ -438,6 +452,7 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
                 unquote(encoded_name),
                 payload["title"],
                 payload["description"],
+                payload["tags"],
             )
         except FileNotFoundError:
             self._send_json(404, {"error": "Media file not found."})
