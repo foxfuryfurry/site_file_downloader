@@ -21,10 +21,13 @@ const configDialog = document.querySelector("#config-dialog");
 const configForm = document.querySelector("#config-form");
 const configError = document.querySelector("#config-error");
 const configSuccess = document.querySelector("#config-success");
+const popularSearches = document.querySelector("#popular-searches");
+const popularError = document.querySelector("#popular-error");
 
 let currentTaskId = null;
 let eventSource = null;
 let activeTab = "gallery";
+let startingSearch = false;
 
 function setStatus(state, label) {
   statusPill.className = `status-pill status-${state}`;
@@ -35,6 +38,9 @@ function setBusy(busy) {
   startButton.disabled = busy;
   tagsInput.disabled = busy;
   cancelButton.hidden = !busy;
+  popularSearches.querySelectorAll("button").forEach((button) => {
+    button.disabled = busy;
+  });
 }
 
 function addLog(message, kind = "") {
@@ -98,15 +104,18 @@ function handleEvent(event) {
       "log-summary",
     );
     refreshGallery();
+    refreshPopularSearches();
     stopWatching();
   } else if (item.type === "cancelled") {
     setStatus("idle", "Cancelled");
     progressLabel.textContent = "Download cancelled";
+    refreshPopularSearches();
     stopWatching();
   } else if (item.type === "error") {
     setStatus("error", "Failed");
     progressLabel.textContent = "Download stopped with an error";
     addLog(item.error || "The download could not be completed.", "log-error");
+    refreshPopularSearches();
     stopWatching();
   }
 }
@@ -126,8 +135,13 @@ function watchTask(taskId) {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  await startSearch(tagsInput.value);
+});
+
+async function startSearch(searchTags) {
+  if (currentTaskId || startingSearch) return;
   formError.hidden = true;
-  const tags = tagsInput.value.trim();
+  const tags = searchTags.trim();
   if (!tags) {
     formError.textContent = "Enter at least one search tag.";
     formError.hidden = false;
@@ -135,6 +149,7 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  startingSearch = true;
   activityLog.replaceChildren();
   progress.value = 0;
   progressLabel.textContent = "Starting search";
@@ -150,15 +165,17 @@ form.addEventListener("submit", async (event) => {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not start the download.");
+    startingSearch = false;
     addLog(`Searching for: ${payload.tags}`);
     watchTask(payload.id);
   } catch (error) {
+    startingSearch = false;
     formError.textContent = error.message;
     formError.hidden = false;
     setStatus("error", "Could not start");
     setBusy(false);
   }
-});
+}
 
 cancelButton.addEventListener("click", async () => {
   if (!currentTaskId) return;
@@ -189,6 +206,7 @@ function selectTab(name) {
   galleryPanel.hidden = !gallerySelected;
   rule34Panel.hidden = gallerySelected;
   if (gallerySelected) refreshGallery();
+  else refreshPopularSearches();
 }
 
 galleryTab.addEventListener("click", () => selectTab("gallery"));
@@ -205,6 +223,49 @@ for (const tab of [galleryTab, rule34Tab]) {
 }
 
 document.querySelector("#refresh-gallery-button").addEventListener("click", refreshGallery);
+
+async function refreshPopularSearches() {
+  popularError.hidden = true;
+  try {
+    const response = await fetch("/api/searches/top", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not load search history.");
+    popularSearches.replaceChildren();
+    if (payload.searches.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "popular-placeholder";
+      empty.textContent = "Searches you run will appear here.";
+      popularSearches.append(empty);
+      return;
+    }
+    payload.searches.forEach((search, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "popular-search-button";
+      const rank = document.createElement("span");
+      rank.className = "popular-rank";
+      rank.textContent = String(index + 1).padStart(2, "0");
+      const tags = document.createElement("span");
+      tags.className = "popular-tags";
+      tags.textContent = search.tags;
+      const calls = document.createElement("span");
+      calls.className = "popular-calls";
+      calls.textContent = `${search.calls}×`;
+      button.append(rank, tags, calls);
+      button.addEventListener("click", () => {
+        if (currentTaskId || startingSearch) return;
+        selectTab("rule34");
+        tagsInput.value = search.tags;
+        startSearch(search.tags);
+      });
+      popularSearches.append(button);
+    });
+  } catch (error) {
+    popularSearches.replaceChildren();
+    popularError.textContent = error.message;
+    popularError.hidden = false;
+  }
+}
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;

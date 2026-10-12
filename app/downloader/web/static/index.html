@@ -84,17 +84,19 @@
               <p id="form-error" class="inline-error" role="alert" hidden></p>
             </div>
 
-            <aside class="privacy-card card">
-              <div class="privacy-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"></path></svg>
+            <aside class="popular-card card" aria-labelledby="popular-title">
+              <div class="popular-heading">
+                <div>
+                  <p class="eyebrow">FROM YOUR SEARCH HISTORY</p>
+                  <h2 id="popular-title">Top searches</h2>
+                </div>
+                <span class="popular-spark" aria-hidden="true">↗</span>
               </div>
-              <p class="eyebrow">LOCAL BY DESIGN</p>
-              <h2>Your data stays yours.</h2>
-              <p>Credentials, download history, and files are handled by the local app. This interface makes no third-party requests.</p>
-              <div class="privacy-rule"></div>
-              <div class="privacy-detail"><span class="detail-check">✓</span><span>Saved to your configured folder</span></div>
-              <div class="privacy-detail"><span class="detail-check">✓</span><span>Duplicates skipped automatically</span></div>
-              <div class="privacy-detail"><span class="detail-check">✓</span><span>Metadata saved alongside each file</span></div>
+              <p class="popular-copy">Your five most-searched queries. Select one to run it again.</p>
+              <div id="popular-searches" class="popular-searches" aria-live="polite">
+                <p class="popular-placeholder">Loading your search history…</p>
+              </div>
+              <p id="popular-error" class="inline-error" role="alert" hidden></p>
             </aside>
           </section>
 

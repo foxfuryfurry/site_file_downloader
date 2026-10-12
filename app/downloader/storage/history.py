@@ -90,6 +90,26 @@ def downloaded_ids(history_file: Path, site: str) -> set[str]:
     return set(site_history["downloads"])
 
 
+def top_searches(
+    history_file: Path, site: str, limit: int = 5
+) -> list[dict[str, str | int]]:
+    """Return a site's most frequently searched normalized tag queries."""
+    if not site.strip():
+        raise ValueError("History site name must not be empty.")
+    if limit < 1:
+        raise ValueError("Search history limit must be positive.")
+
+    site_history = _read_history(history_file).get(site)
+    if site_history is None:
+        return []
+    searches = enumerate(site_history["searches"])
+    ranked = sorted(searches, key=lambda entry: -entry[1]["calls"])
+    return [
+        {"tags": search["tags"], "calls": search["calls"]}
+        for _, search in ranked[:limit]
+    ]
+
+
 def record_search(history_file: Path, site: str, tags: str) -> None:
     """Count searches with the same normalized, space-separated tags."""
     if not site.strip():

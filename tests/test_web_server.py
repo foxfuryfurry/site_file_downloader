@@ -122,6 +122,42 @@ class WebServerTests(unittest.TestCase):
             )
         )
 
+    def test_top_search_api_ranks_history_by_call_count(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            history_file = root / "history.json"
+            history_file.write_text(
+                json.dumps(
+                    {
+                        "rule34": {
+                            "searches": [
+                                {"tags": f"query_{index}", "calls": index}
+                                for index in range(1, 8)
+                            ],
+                            "downloads": [],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            configured = AppConfig(
+                root, history_file, root / "keys.json", {"rule34": 1}
+            )
+            with patch(
+                "app.downloader.web_server.load_config", return_value=configured
+            ):
+                with urlopen(self.origin + "/api/searches/top", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    searches = json.load(response)["searches"]
+
+        self.assertEqual(
+            searches,
+            [
+                {"tags": f"query_{index}", "calls": index}
+                for index in range(7, 2, -1)
+            ],
+        )
+
     def test_progress_events_are_streamed_as_server_sent_events(self):
         request = Request(
             self.origin + "/api/tasks",

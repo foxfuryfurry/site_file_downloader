@@ -14,6 +14,7 @@ import webbrowser
 
 from .config import CONFIG_PATH, load_config
 from .services.download_tasks import DownloadTask, DownloadTaskManager
+from .storage.history import top_searches
 
 
 STATIC_DIR = Path(__file__).with_name("web") / "static"
@@ -241,6 +242,16 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             try:
                 config = load_config()
                 self._send_json(200, {"items": gallery_items(config.downloads_dir)})
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if path == "/api/searches/top":
+            try:
+                config = load_config()
+                self._send_json(
+                    200,
+                    {"searches": top_searches(config.history_file, "rule34", 5)},
+                )
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 self._send_json(500, {"error": str(exc)})
             return
