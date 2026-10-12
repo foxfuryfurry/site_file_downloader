@@ -1,0 +1,8 @@
+{
+  "services": {
+    "rule34": {
+      "api_key": "replace-with-your-key",
+      "user_id": "your-rule34-user-id"
+    }
+  }
+}

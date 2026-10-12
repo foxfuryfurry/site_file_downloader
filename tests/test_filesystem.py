@@ -1,0 +1,55 @@
+"""Tests for downloaded media and Rule34 metadata sidecars."""
+
+import json
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from app.downloader.sources.rule34_adapter import Rule34Post
+from app.downloader.storage.filesystem import save_post
+from app.downloader.transport.rate_limiter import RequestRateLimiter
+
+
+class FilesystemTests(unittest.TestCase):
+    @patch("app.downloader.storage.filesystem.download_to_path")
+    def test_save_post_writes_full_api_data_to_same_basename_json(self, download):
+        def write_media(_url: str, destination: Path, _site: str, _limiter) -> None:
+            destination.write_bytes(b"media")
+
+        download.side_effect = write_media
+        api_data = {
+            "id": 123,
+            "rating": "explicit",
+            "tags": "artist character",
+            "file_url": "https://img.rule34.xxx/images/123/example.jpg",
+            "width": 1920,
+            "nested": {"source": "test"},
+        }
+        post = Rule34Post(
+            "123",
+            "artist character",
+            "https://img.rule34.xxx/images/123/example.jpg",
+            api_data,
+        )
+
+        with TemporaryDirectory() as directory:
+            media_path = save_post(
+                post,
+                Path(directory),
+                RequestRateLimiter({"rule34": 1}),
+            )
+            metadata_path = media_path.with_suffix(".json")
+
+            self.assertEqual(media_path.name, "rule34_123.jpg")
+            self.assertEqual(metadata_path.name, "rule34_123.json")
+            self.assertEqual(media_path.read_bytes(), b"media")
+            self.assertEqual(
+                json.loads(metadata_path.read_text(encoding="utf-8")),
+                api_data,
+            )
+            self.assertFalse(list(Path(directory).glob("*.part")))
+
+
+if __name__ == "__main__":
+    unittest.main()

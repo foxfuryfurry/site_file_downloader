@@ -1,0 +1,10 @@
+{
+  "downloads_dir": "_output",
+  "history_file": "app/history.json",
+  "keys_file": "app/keys.json",
+  "rate_limits": {
+    "rule34": {
+      "requests_per_second": 1
+    }
+  }
+}
