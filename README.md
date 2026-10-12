@@ -19,8 +19,9 @@ download**. The app fetches results in pages of up to 1,000, continuing with
 Rule34's `pid` until all matching pages have been read. New files are saved in
 the configured download folder, and completed post IDs are recorded in history
 so they are skipped on later searches. Each media file also gets a `.json`
-sidecar with the complete post record returned by Rule34, using the same base
-filename (for example, `rule34_123.jpg` and `rule34_123.json`).
+sidecar with only the post `id`, `tags` (as a list), and `source`, using the
+same base filename (for example, `rule34_123.jpg` and `rule34_123.json`). The
+Rule34 API response does not provide the post's displayed "Posted" date.
 
 Searches are restricted to posts rated explicit and filter several common
 underage-related tags. The confirmation checkbox is not an age-verification
