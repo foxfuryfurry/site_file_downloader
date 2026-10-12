@@ -294,6 +294,30 @@ function formatBytes(bytes) {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`;
 }
 
+function createGalleryThumbnail(item) {
+  const image = document.createElement("img");
+  image.src = item.thumbnail_url;
+  image.alt = "";
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.addEventListener("error", async () => {
+    let message = "Preview unavailable.";
+    try {
+      const response = await fetch(item.thumbnail_url, { cache: "no-store" });
+      const payload = await response.json();
+      if (typeof payload.error === "string") message = payload.error;
+    } catch (error) {
+      if (error instanceof Error) message = `Preview unavailable: ${error.message}`;
+    }
+    const unavailable = document.createElement("span");
+    unavailable.className = "gallery-thumbnail-error";
+    unavailable.textContent = message;
+    unavailable.title = message;
+    image.replaceWith(unavailable);
+  }, { once: true });
+  return image;
+}
+
 function renderGallery(items) {
   const activeName = galleryDialog.open
     ? galleryItems[activeGalleryIndex]?.name
@@ -325,23 +349,7 @@ function renderGallery(items) {
     card.addEventListener("click", () => openGalleryItem(items.indexOf(item)));
     const preview = document.createElement("span");
     preview.className = "gallery-preview";
-    if (item.kind === "video") {
-      const video = document.createElement("video");
-      video.src = item.url;
-      video.preload = "metadata";
-      video.autoplay = true;
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      preview.append(video);
-    } else {
-      const image = document.createElement("img");
-      image.src = item.url;
-      image.alt = "";
-      image.loading = "lazy";
-      image.decoding = "async";
-      preview.append(image);
-    }
+    preview.append(createGalleryThumbnail(item));
     card.append(preview);
     galleryGrid.append(card);
   }
@@ -480,19 +488,7 @@ function renderGalleryViewer() {
       activeGalleryIndex = index;
       renderGalleryViewer();
     });
-    if (carouselItem.kind === "video") {
-      const video = document.createElement("video");
-      video.src = carouselItem.url;
-      video.preload = "metadata";
-      video.muted = true;
-      button.append(video);
-    } else {
-      const image = document.createElement("img");
-      image.src = carouselItem.url;
-      image.alt = "";
-      image.loading = "lazy";
-      button.append(image);
-    }
+    button.append(createGalleryThumbnail(carouselItem));
     galleryCarousel.append(button);
   });
 
@@ -532,6 +528,9 @@ async function refreshGallery() {
 
 document.querySelector("#close-gallery-viewer").addEventListener("click", () => {
   galleryDialog.close();
+});
+galleryDialog.addEventListener("close", () => {
+  galleryViewerMedia.replaceChildren();
 });
 galleryDialog.addEventListener("click", (event) => {
   if (event.target === galleryDialog) galleryDialog.close();

@@ -37,6 +37,21 @@ sidecar. The Rule34 API response does not provide the post's displayed
 "Posted" date; older files without `downloaded_at` show an unknown download
 time rather than an estimated file modification time.
 
+The gallery creates JPEG thumbnails on first preview request and reuses them
+while they are at least as new as the original. Thumbnails are kept in the
+hidden `.thumbnails` subfolder as `<original filename>.jpg`; deleting media
+also removes its thumbnail. Grid cards and the viewer carousel use these small
+previews, and only the selected item's original is loaded in full view. Existing
+files are handled automatically without renaming or moving them.
+
+Install the thumbnail dependencies with
+`python -m pip install -r requirements.txt`. Video previews use a system FFmpeg
+from `PATH` when available, or the FFmpeg executable bundled with
+`imageio-ffmpeg`; a separate system-wide FFmpeg installation is not required.
+If FFmpeg cannot decode a video, the video itself remains available and the
+preview displays an unavailable message; the thumbnail API returns an
+actionable error.
+
 The browser UI is bundled with the Python package and makes no third-party
 requests. The local server binds only to `127.0.0.1`; downloads themselves
 still require a connection to Rule34. Progress updates stream from the backend,

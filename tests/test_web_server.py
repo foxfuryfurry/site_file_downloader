@@ -225,8 +225,15 @@ class WebServerTests(unittest.TestCase):
             gallery_dir.mkdir()
             image_path = gallery_dir / "rule34_42.jpg"
             metadata_path = gallery_dir / "rule34_42.json"
+            thumbnail_path = gallery_dir / ".thumbnails" / "rule34_42.jpg.jpg"
+            unrelated_thumbnail = (
+                gallery_dir / ".thumbnails" / "unrelated.png.jpg"
+            )
             image_path.write_bytes(b"test-image")
             metadata_path.write_text('{"id": 42}', encoding="utf-8")
+            thumbnail_path.parent.mkdir()
+            thumbnail_path.write_bytes(b"thumbnail")
+            unrelated_thumbnail.write_bytes(b"keep")
             configured = AppConfig(
                 gallery_dir, Path(directory) / "history.json",
                 Path(directory) / "keys.json", {"rule34": 1},
@@ -243,6 +250,75 @@ class WebServerTests(unittest.TestCase):
 
             self.assertFalse(image_path.exists())
             self.assertFalse(metadata_path.exists())
+            self.assertFalse(thumbnail_path.exists())
+            self.assertTrue(unrelated_thumbnail.exists())
+
+    def test_gallery_thumbnail_is_generated_lazily_without_serving_original(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory) / "media"
+            gallery_dir.mkdir()
+            image_path = gallery_dir / "legacy.jpg"
+            image_path.write_bytes(b"original-image")
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+
+            def write_thumbnail(_source: Path, destination: Path) -> None:
+                destination.write_bytes(b"small-thumbnail")
+
+            with (
+                patch("app.downloader.web_server.load_config", return_value=configured),
+                patch(
+                    "app.downloader.storage.thumbnails._create_image_thumbnail",
+                    side_effect=write_thumbnail,
+                ),
+            ):
+                with urlopen(self.origin + "/api/gallery", timeout=2) as response:
+                    item = json.load(response)["items"][0]
+                self.assertEqual(
+                    item["thumbnail_url"].split("?")[0],
+                    "/api/gallery/thumbnails/legacy.jpg",
+                )
+                self.assertFalse((gallery_dir / ".thumbnails").exists())
+                with urlopen(self.origin + item["thumbnail_url"], timeout=2) as response:
+                    self.assertEqual(response.headers.get_content_type(), "image/jpeg")
+                    self.assertEqual(response.read(), b"small-thumbnail")
+
+            self.assertEqual(image_path.read_bytes(), b"original-image")
+
+    def test_video_thumbnail_api_exposes_missing_ffmpeg_error(self):
+        with TemporaryDirectory() as directory:
+            gallery_dir = Path(directory) / "media"
+            gallery_dir.mkdir()
+            (gallery_dir / "clip.mp4").write_bytes(b"video")
+            configured = AppConfig(
+                gallery_dir, Path(directory) / "history.json",
+                Path(directory) / "keys.json", {"rule34": 1},
+            )
+            with (
+                patch("app.downloader.web_server.load_config", return_value=configured),
+                patch(
+                    "app.downloader.storage.thumbnails.shutil.which",
+                    return_value=None,
+                ),
+                patch(
+                    "app.downloader.storage.thumbnails.imageio_ffmpeg.get_ffmpeg_exe",
+                    side_effect=RuntimeError("No bundled executable."),
+                ),
+            ):
+                with self.assertRaises(HTTPError) as context:
+                    urlopen(
+                        self.origin + "/api/gallery/thumbnails/clip.mp4",
+                        timeout=2,
+                    )
+
+            self.assertEqual(context.exception.code, 500)
+            self.assertIn(
+                "Install dependencies with",
+                context.exception.read().decode(),
+            )
+            context.exception.close()
 
     def test_gallery_metadata_update_preserves_existing_fields(self):
         with TemporaryDirectory() as directory:

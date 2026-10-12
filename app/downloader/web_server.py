@@ -16,6 +16,7 @@ import webbrowser
 from .config import CONFIG_PATH, load_config
 from .services.download_tasks import DownloadTask, DownloadTaskManager
 from .storage.history import top_searches
+from .storage.thumbnails import ensure_thumbnail, thumbnail_path
 
 
 STATIC_DIR = Path(__file__).with_name("web") / "static"
@@ -68,6 +69,10 @@ def gallery_items(downloads_dir: Path) -> list[dict[str, Any]]:
             {
                 "name": path.name,
                 "url": f"/api/gallery/media/{quote(path.name, safe='')}",
+                "thumbnail_url": (
+                    f"/api/gallery/thumbnails/{quote(path.name, safe='')}"
+                    f"?v={details.st_mtime_ns}"
+                ),
                 "kind": "video" if path.suffix.lower() in {".mp4", ".webm"} else "image",
                 "size": details.st_size,
                 "modified": details.st_mtime,
@@ -97,8 +102,23 @@ def delete_gallery_media(downloads_dir: Path, filename: str) -> None:
         raise FileNotFoundError("Media file not found.") from exc
     if not resolved_media_path.is_file():
         raise FileNotFoundError("Media file not found.")
+    thumbnail = _gallery_thumbnail_path(root, filename)
     media_path.unlink()
     media_path.with_suffix(".json").unlink(missing_ok=True)
+    thumbnail.unlink(missing_ok=True)
+
+
+def _gallery_thumbnail_path(downloads_dir: Path, filename: str) -> Path:
+    """Return a thumbnail path that remains within the configured downloads folder."""
+    root = downloads_dir.resolve()
+    thumbnail = thumbnail_path(root, filename)
+    try:
+        thumbnail.resolve().relative_to(root)
+    except ValueError as exc:
+        raise OSError(
+            "Thumbnail directory must stay inside the download folder."
+        ) from exc
+    return thumbnail
 
 
 def update_gallery_metadata(
@@ -372,6 +392,11 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 self._send_json(500, {"error": str(exc)})
             return
+        thumbnail_prefix = "/api/gallery/thumbnails/"
+        if path.startswith(thumbnail_prefix):
+            encoded_name = path.removeprefix(thumbnail_prefix)
+            self._serve_gallery_thumbnail(encoded_name)
+            return
         if path.startswith("/api/gallery/media/"):
             self._serve_gallery_media(path.removeprefix("/api/gallery/media/"))
             return
@@ -638,6 +663,48 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
                 self._security_headers()
                 self.end_headers()
                 while chunk := media_file.read(1024 * 128):
+                    self.wfile.write(chunk)
+        except OSError:
+            return
+
+    def _serve_gallery_thumbnail(self, encoded_name: str) -> None:
+        filename = unquote(encoded_name)
+        if (
+            not filename
+            or filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+            or Path(filename).suffix.lower() not in MEDIA_EXTENSIONS
+        ):
+            self._send_json(404, {"error": "Media file not found."})
+            return
+        try:
+            root = load_config().downloads_dir.resolve()
+            media_path = (root / filename).resolve(strict=True)
+            media_path.relative_to(root)
+            if not media_path.is_file():
+                raise FileNotFoundError(filename)
+            thumbnail = ensure_thumbnail(
+                media_path, _gallery_thumbnail_path(root, filename)
+            )
+            thumbnail_file = thumbnail.open("rb")
+        except (OSError, ValueError):
+            self._send_json(404, {"error": "Media file not found."})
+            return
+        except RuntimeError as exc:
+            self._send_json(500, {"error": str(exc)})
+            return
+
+        try:
+            with thumbnail_file:
+                content_length = os.fstat(thumbnail_file.fileno()).st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(content_length))
+                self.send_header("Cache-Control", "private, max-age=300")
+                self._security_headers()
+                self.end_headers()
+                while chunk := thumbnail_file.read(1024 * 128):
                     self.wfile.write(chunk)
         except OSError:
             return
