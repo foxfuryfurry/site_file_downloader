@@ -24,7 +24,7 @@ def download_by_tags(
     rate_limiter = RequestRateLimiter(config.rate_limits)
     posts = search_posts(tags, credentials, rate_limiter)
     if not posts:
-        report("No eligible adult-rated posts matched those tags.")
+        report(f'No images/videos with the tags: "{tags}"')
         return 0, 0, 0
 
     seen_ids = downloaded_ids(config.history_file, site)

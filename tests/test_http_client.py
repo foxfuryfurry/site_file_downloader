@@ -61,6 +61,19 @@ class HttpClientTests(unittest.TestCase):
             [{"id": 7}],
         )
 
+    @patch("app.downloader.transport.http_client.urlopen")
+    def test_empty_success_response_is_treated_as_no_results(self, urlopen_mock):
+        urlopen_mock.return_value = FakeResponse(b" \r\n", "application/json")
+
+        self.assertEqual(
+            get_json(
+                "https://api.rule34.xxx/index.php",
+                "rule34",
+                RequestRateLimiter({"rule34": 1}),
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
