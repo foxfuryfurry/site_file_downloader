@@ -18,13 +18,15 @@ def thumbnail_path(downloads_dir: Path, filename: str) -> Path:
     return downloads_dir / ".thumbnails" / f"{filename}.jpg"
 
 
-def ensure_thumbnail(media_path: Path, destination: Path) -> Path:
+def ensure_thumbnail(
+    media_path: Path, destination: Path, *, force: bool = False
+) -> Path:
     """Create or refresh a JPEG preview if it is missing or older than its source."""
     if not media_path.is_file():
         raise FileNotFoundError(f"Media file not found: {media_path.name}")
     source_modified = media_path.stat().st_mtime_ns
     try:
-        if destination.stat().st_mtime_ns >= source_modified:
+        if not force and destination.stat().st_mtime_ns >= source_modified:
             return destination
     except FileNotFoundError:
         pass
@@ -46,6 +48,47 @@ def ensure_thumbnail(media_path: Path, destination: Path) -> Path:
             f"Could not create thumbnail for {media_path.name}: {exc}"
         ) from exc
     return destination
+
+
+def recompute_thumbnails(downloads_dir: Path) -> dict[str, object]:
+    """Rebuild thumbnails for every supported media file in the download folder."""
+    if not downloads_dir.exists():
+        return {"processed": 0, "succeeded": 0, "failures": []}
+
+    root = downloads_dir.resolve()
+    cache_dir = root / ".thumbnails"
+    if cache_dir.is_symlink():
+        raise OSError(
+            "Cannot recompute thumbnails because .thumbnails is a symbolic link."
+        )
+    if cache_dir.exists():
+        if not cache_dir.is_dir():
+            raise OSError(".thumbnails exists but is not a directory.")
+        shutil.rmtree(cache_dir)
+
+    media_files = sorted(
+        path
+        for path in root.iterdir()
+        if path.suffix.lower()
+        in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm"}
+        and path.is_file()
+    )
+    failures: list[dict[str, str]] = []
+    for media_path in media_files:
+        try:
+            ensure_thumbnail(
+                media_path,
+                thumbnail_path(root, media_path.name),
+                force=True,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            failures.append({"name": media_path.name, "error": str(exc)})
+
+    return {
+        "processed": len(media_files),
+        "succeeded": len(media_files) - len(failures),
+        "failures": failures,
+    }
 
 
 def _create_image_thumbnail(media_path: Path, destination: Path) -> None:

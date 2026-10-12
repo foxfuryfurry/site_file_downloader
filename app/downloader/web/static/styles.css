@@ -152,6 +152,12 @@ input:disabled { opacity: .55; }
 .credentials-heading label { margin: 18px 0 0; }
 .credentials-heading .field-hint { margin: 5px 0 10px; }
 .config-success { margin: 13px 0 0; color: var(--mint); font-size: 11px; }
+.config-thumbnail-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #30333f; }
+.config-thumbnail-actions label { margin: 0 0 5px; }
+.config-thumbnail-actions .field-hint { margin: 0; }
+.config-thumbnail-actions .button { flex: 0 0 auto; }
+.config-thumbnail-status { margin: 8px 0 0; color: var(--mint); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.config-thumbnail-status.error { color: #ffaaaa; }
 .dialog-actions { display: flex; justify-content: end; gap: 9px; margin-top: 20px; padding-top: 17px; border-top: 1px solid #30333f; }
 .dialog-actions .button { min-height: 38px; font-size: 11px; }
 

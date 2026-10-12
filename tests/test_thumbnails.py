@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from app.downloader.storage.thumbnails import ensure_thumbnail, thumbnail_path
+from app.downloader.storage.thumbnails import (
+    ensure_thumbnail,
+    recompute_thumbnails,
+    thumbnail_path,
+)
 
 
 class ThumbnailTests(unittest.TestCase):
@@ -119,6 +123,48 @@ class ThumbnailTests(unittest.TestCase):
 
             self.assertEqual(run_ffmpeg.call_args.args[0][0], "system-ffmpeg")
             bundled_ffmpeg.assert_not_called()
+
+    def test_recompute_forces_existing_thumbnails_and_reports_failures(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.jpg"
+            second = root / "second.jpg"
+            ignored = root / "notes.txt"
+            first.write_bytes(b"image")
+            second.write_bytes(b"image")
+            ignored.write_text("not media", encoding="utf-8")
+            cache = root / ".thumbnails"
+            cache.mkdir()
+            (cache / "stale.jpg").write_bytes(b"stale thumbnail")
+            (cache / "nested").mkdir()
+            (cache / "nested" / "stale.jpg").write_bytes(b"stale nested thumbnail")
+
+            def create_thumbnail(media_path: Path, destination: Path, *, force: bool):
+                self.assertTrue(force)
+                self.assertFalse((cache / "stale.jpg").exists())
+                self.assertFalse((cache / "nested").exists())
+                if media_path == second:
+                    raise RuntimeError("Bad image data.")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"thumbnail")
+
+            with patch(
+                "app.downloader.storage.thumbnails.ensure_thumbnail",
+                side_effect=create_thumbnail,
+            ) as ensure:
+                result = recompute_thumbnails(root)
+
+            self.assertEqual(
+                result,
+                {
+                    "processed": 2,
+                    "succeeded": 1,
+                    "failures": [
+                        {"name": "second.jpg", "error": "Bad image data."}
+                    ],
+                },
+            )
+            self.assertEqual(ensure.call_count, 2)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,10 @@ from `PATH` when available, or the FFmpeg executable bundled with
 If FFmpeg cannot decode a video, the video itself remains available and the
 preview displays an unavailable message; the thumbnail API returns an
 actionable error.
+Use **Config → Recompute thumbnails** to regenerate all previews in the
+currently saved download folder. This first removes the existing `.thumbnails`
+cache, then rebuilds previews; the operation reports how many previews were
+rebuilt and lists individual files that could not be processed.
 
 The browser UI is bundled with the Python package and makes no third-party
 requests. The local server binds only to `127.0.0.1`; downloads themselves

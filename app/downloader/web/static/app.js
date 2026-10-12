@@ -34,6 +34,8 @@ const configDialog = document.querySelector("#config-dialog");
 const configForm = document.querySelector("#config-form");
 const configError = document.querySelector("#config-error");
 const configSuccess = document.querySelector("#config-success");
+const recomputeThumbnailsButton = document.querySelector("#recompute-thumbnails");
+const thumbnailRecomputeStatus = document.querySelector("#thumbnail-recompute-status");
 const popularSearches = document.querySelector("#popular-searches");
 const popularError = document.querySelector("#popular-error");
 
@@ -43,6 +45,7 @@ let activeTab = "gallery";
 let startingSearch = false;
 let galleryItems = [];
 let activeGalleryIndex = -1;
+let galleryThumbnailCacheBuster = 0;
 
 function setStatus(state, label) {
   statusPill.className = `status-pill status-${state}`;
@@ -296,7 +299,7 @@ function formatBytes(bytes) {
 
 function createGalleryThumbnail(item) {
   const image = document.createElement("img");
-  image.src = item.thumbnail_url;
+  image.src = `${item.thumbnail_url}&refresh=${galleryThumbnailCacheBuster}`;
   image.alt = "";
   image.loading = "lazy";
   image.decoding = "async";
@@ -620,6 +623,9 @@ deleteGalleryItemButton.addEventListener("click", async () => {
 function openConfig() {
   configError.hidden = true;
   configSuccess.hidden = true;
+  thumbnailRecomputeStatus.hidden = true;
+  thumbnailRecomputeStatus.classList.remove("error");
+  thumbnailRecomputeStatus.textContent = "";
   document.querySelector("#config-api-key").value = "";
   document.querySelector("#config-user-id").value = "";
   configButton.disabled = true;
@@ -647,6 +653,42 @@ function openConfig() {
 }
 
 configButton.addEventListener("click", openConfig);
+recomputeThumbnailsButton.addEventListener("click", async () => {
+  recomputeThumbnailsButton.disabled = true;
+  thumbnailRecomputeStatus.hidden = false;
+  thumbnailRecomputeStatus.classList.remove("error");
+  thumbnailRecomputeStatus.textContent = "Rebuilding thumbnails…";
+  try {
+    const response = await fetch("/api/gallery/thumbnails/recompute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (response.status === 404) {
+      throw new Error(
+        "This running app server does not support thumbnail rebuilding yet. " +
+        "Close and restart the downloader, then reload this page.",
+      );
+    }
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not rebuild thumbnails.");
+    const failures = Array.isArray(payload.failures) ? payload.failures : [];
+    const details = failures
+      .map((failure) => `${failure.name}: ${failure.error}`)
+      .join("; ");
+    thumbnailRecomputeStatus.classList.toggle("error", failures.length > 0);
+    thumbnailRecomputeStatus.textContent =
+      `Rebuilt ${payload.succeeded} of ${payload.processed} thumbnails.` +
+      (details ? ` Failed: ${details}` : "");
+    galleryThumbnailCacheBuster = Date.now();
+    await refreshGallery();
+  } catch (error) {
+    thumbnailRecomputeStatus.classList.add("error");
+    thumbnailRecomputeStatus.textContent = error.message;
+  } finally {
+    recomputeThumbnailsButton.disabled = false;
+  }
+});
 document.querySelector("#close-config").addEventListener("click", () => configDialog.close());
 document.querySelector("#cancel-config").addEventListener("click", () => configDialog.close());
 configDialog.addEventListener("click", (event) => {

@@ -590,6 +590,51 @@ class WebServerTests(unittest.TestCase):
             }
         )
 
+    def test_recompute_thumbnails_api_returns_rebuild_summary(self):
+        configured = AppConfig(
+            Path("downloads"), Path("history.json"), Path("keys.json"), {"rule34": 1}
+        )
+        result = {
+            "processed": 3,
+            "succeeded": 2,
+            "failures": [{"name": "bad.mp4", "error": "FFmpeg error"}],
+        }
+        request = Request(
+            self.origin + "/api/gallery/thumbnails/recompute",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": self.origin,
+            },
+            method="POST",
+        )
+        with (
+            patch("app.downloader.web_server.load_config", return_value=configured),
+            patch(
+                "app.downloader.web_server.recompute_thumbnails",
+                return_value=result,
+            ) as recompute,
+        ):
+            with urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.load(response), result)
+        recompute.assert_called_once_with(configured.downloads_dir)
+
+    def test_recompute_thumbnails_api_rejects_nonempty_body(self):
+        request = Request(
+            self.origin + "/api/gallery/thumbnails/recompute",
+            data=json.dumps({"folder": "other"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": self.origin,
+            },
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as context:
+            urlopen(request, timeout=2)
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
+
 
 if __name__ == "__main__":
     unittest.main()

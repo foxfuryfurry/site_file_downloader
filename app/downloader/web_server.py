@@ -16,7 +16,11 @@ import webbrowser
 from .config import CONFIG_PATH, load_config
 from .services.download_tasks import DownloadTask, DownloadTaskManager
 from .storage.history import top_searches
-from .storage.thumbnails import ensure_thumbnail, thumbnail_path
+from .storage.thumbnails import (
+    ensure_thumbnail,
+    recompute_thumbnails,
+    thumbnail_path,
+)
 
 
 STATIC_DIR = Path(__file__).with_name("web") / "static"
@@ -412,9 +416,13 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         if not self._is_local_request(check_origin=True):
             self._send_json(403, {"error": "Requests must originate from this local app."})
             return
-        if urlsplit(self.path).path != "/api/tasks":
-            if urlsplit(self.path).path == "/api/config":
+        request_path = urlsplit(self.path).path
+        if request_path != "/api/tasks":
+            if request_path == "/api/config":
                 self._save_config()
+                return
+            if request_path == "/api/gallery/thumbnails/recompute":
+                self._recompute_gallery_thumbnails()
                 return
             self._send_json(404, {"error": "Not found."})
             return
@@ -441,6 +449,20 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             self._send_json(409, {"error": str(exc)})
         else:
             self._send_json(202, self.server.task_manager.snapshot(task))
+
+    def _recompute_gallery_thumbnails(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        if payload:
+            self._send_json(400, {"error": "The JSON body must be an empty object."})
+            return
+        try:
+            result = recompute_thumbnails(load_config().downloads_dir)
+        except OSError as exc:
+            self._send_json(500, {"error": f"Could not scan the download folder: {exc}"})
+            return
+        self._send_json(200, result)
 
     def do_PATCH(self) -> None:
         if not self._is_local_request(check_origin=True):

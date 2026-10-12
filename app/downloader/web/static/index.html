@@ -140,6 +140,14 @@
         <label for="config-downloads-dir">Download folder</label>
         <input id="config-downloads-dir" name="downloads_dir" type="text" maxlength="4096" required>
         <p class="field-hint">Media in this folder appears in Gallery. Relative paths are resolved from the project folder.</p>
+        <div class="config-thumbnail-actions">
+          <div>
+            <label for="recompute-thumbnails">Gallery thumbnails</label>
+            <p class="field-hint">Rebuild previews for media in the currently saved download folder.</p>
+          </div>
+          <button id="recompute-thumbnails" class="button button-refresh" type="button">Recompute thumbnails</button>
+        </div>
+        <p id="thumbnail-recompute-status" class="config-thumbnail-status" role="status" aria-live="polite" hidden></p>
         <label for="config-rate-limit">Rule34 requests per second</label>
         <input id="config-rate-limit" name="rule34_requests_per_second" type="number" min="0.0001" step="any" required>
         <div class="credentials-heading">
