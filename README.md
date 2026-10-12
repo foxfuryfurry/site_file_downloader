@@ -23,13 +23,14 @@ Use **Config** to update the download folder, Rule34 request rate, and (if
 needed) Rule34 credentials. Saved credentials are never returned to the browser;
 leave both credential fields blank to keep the existing values.
 
-Enter space-separated Rule34 tags and choose **Search and download**. The app
-fetches results in pages of up to 1,000, continuing with Rule34's `pid` until
-all matching pages have been read. New files are saved in the configured
-download folder, and completed post IDs are recorded in history so they are
-skipped on later searches. Each media file also gets a `.json` sidecar with the
-complete post record returned by Rule34, using the same base filename (for
-example, `rule34_123.jpg` and `rule34_123.json`).
+Enter space-separated Rule34 tags in the search box and choose **Search and
+download**. The app fetches results in pages of up to 1,000, continuing with
+Rule34's `pid` until all matching pages have been read. New files are saved in
+the configured download folder, and completed post IDs are recorded in history
+so they are skipped on later searches. Each media file also gets a `.json`
+sidecar with only the post `id`, `tags` (as a list), and `source`, using the
+same base filename (for example, `rule34_123.jpg` and `rule34_123.json`). The
+Rule34 API response does not provide the post's displayed "Posted" date.
 
 The browser UI is bundled with the Python package and makes no third-party
 requests. The local server binds only to `127.0.0.1`; downloads themselves

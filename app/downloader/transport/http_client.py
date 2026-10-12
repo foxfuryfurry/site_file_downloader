@@ -77,6 +77,9 @@ def get_json(
             f"({type(exc).__name__}: {exc.reason if isinstance(exc, URLError) else exc})."
         ) from exc
 
+    if not body.strip():
+        return []
+
     try:
         return json.loads(body.decode("utf-8"))
     except UnicodeDecodeError as exc:

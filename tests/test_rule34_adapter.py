@@ -135,6 +135,45 @@ class Rule34AdapterTests(unittest.TestCase):
 class DownloadHistoryTests(unittest.TestCase):
     @patch("app.downloader.services.download_service.save_post")
     @patch("app.downloader.services.download_service.search_posts")
+    def test_no_results_reports_search_tags_without_crashing(
+        self, search_posts_mock, save_post_mock
+    ):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AppConfig(
+                root / "downloads",
+                root / "history.json",
+                root / "keys.json",
+                {"rule34": 1},
+            )
+            config.keys_file.write_text(
+                json.dumps(
+                    {
+                        "services": {
+                            "rule34": {
+                                "api_key": "test-secret",
+                                "user_id": "123",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            search_posts_mock.return_value = []
+            messages: list[str] = []
+
+            self.assertEqual(
+                download_by_tags("no_such_tag", config, messages.append),
+                (0, 0, 0),
+            )
+
+            self.assertEqual(
+                messages, ['No images/videos with the tags: "no_such_tag"']
+            )
+            save_post_mock.assert_not_called()
+
+    @patch("app.downloader.services.download_service.save_post")
+    @patch("app.downloader.services.download_service.search_posts")
     def test_downloaded_posts_are_not_downloaded_again(
         self, search_posts_mock, save_post_mock
     ):

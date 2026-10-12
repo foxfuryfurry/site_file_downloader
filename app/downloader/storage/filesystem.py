@@ -31,8 +31,16 @@ def save_post(
                 post.file_url, temporary_path, "rule34", rate_limiter, cancel_event
             )
         temporary_path.replace(destination)
+        raw_tags = post.raw_data.get("tags", post.tags)
+        if not isinstance(raw_tags, str):
+            raise ValueError("Rule34 post tags must be a string.")
+        metadata = {
+            "id": post.raw_data.get("id", post.post_id),
+            "tags": raw_tags.split(),
+            "source": post.raw_data.get("source"),
+        }
         with temporary_metadata_path.open("w", encoding="utf-8") as metadata_file:
-            json.dump(post.raw_data, metadata_file, ensure_ascii=False, indent=2)
+            json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
             metadata_file.write("\n")
         temporary_metadata_path.replace(metadata_path)
     except (OSError, TypeError, ValueError) as exc:

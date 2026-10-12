@@ -15,7 +15,7 @@ from app.downloader.transport.rate_limiter import RequestRateLimiter
 
 class FilesystemTests(unittest.TestCase):
     @patch("app.downloader.storage.filesystem.download_to_path")
-    def test_save_post_writes_full_api_data_to_same_basename_json(self, download):
+    def test_save_post_writes_selected_api_data_with_tags_as_list(self, download):
         def write_media(_url: str, destination: Path, _site: str, _limiter) -> None:
             destination.write_bytes(b"media")
 
@@ -26,7 +26,7 @@ class FilesystemTests(unittest.TestCase):
             "tags": "artist character",
             "file_url": "https://img.rule34.xxx/images/123/example.jpg",
             "width": 1920,
-            "nested": {"source": "test"},
+            "source": "https://example.org/post/123",
         }
         post = Rule34Post(
             "123",
@@ -48,7 +48,11 @@ class FilesystemTests(unittest.TestCase):
             self.assertEqual(media_path.read_bytes(), b"media")
             self.assertEqual(
                 json.loads(metadata_path.read_text(encoding="utf-8")),
-                api_data,
+                {
+                    "id": 123,
+                    "tags": ["artist", "character"],
+                    "source": "https://example.org/post/123",
+                },
             )
             self.assertFalse(list(Path(directory).glob("*.part")))
 
