@@ -1,10 +1,12 @@
 """Search Rule34 for adult-rated posts matching user-supplied tags."""
 
 from dataclasses import dataclass, field
+import threading
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
 from ..config import Rule34Credentials
+from ..errors import DownloadCancelled
 from ..transport.rate_limiter import RequestRateLimiter
 from ..transport.http_client import get_json
 
@@ -49,6 +51,7 @@ def search_posts(
     tags: str,
     credentials: Rule34Credentials,
     rate_limiter: RequestRateLimiter,
+    cancel_event: threading.Event | None = None,
 ) -> list[Rule34Post]:
     """Search all result pages, requiring adult-rated posts."""
     user_tags = tags.split()
@@ -69,9 +72,16 @@ def search_posts(
     posts: list[Rule34Post] = []
     page_id = 0
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise DownloadCancelled("Download cancelled.")
         params["pid"] = str(page_id)
         query = urlencode(params)
-        response = get_json(f"{API_URL}?{query}", "rule34", rate_limiter)
+        if cancel_event is None:
+            response = get_json(f"{API_URL}?{query}", "rule34", rate_limiter)
+        else:
+            response = get_json(
+                f"{API_URL}?{query}", "rule34", rate_limiter, cancel_event
+            )
         if isinstance(response, str):
             if "auth" in response.lower():
                 raise RuntimeError(

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10131b">
+    <title>Tagfile · Local Downloader</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Tagfile home">
+          <span class="brand-mark" aria-hidden="true">T</span>
+          <span>tagfile<span class="brand-dot">.</span></span>
+        </a>
+        <div class="local-badge"><span class="local-dot"></span> Running on this device</div>
+      </header>
+
+      <main>
+        <section class="intro">
+          <p class="eyebrow">YOUR PERSONAL MEDIA WORKFLOW</p>
+          <h1>Find it. Save it.<br><span>Keep it yours.</span></h1>
+          <p class="intro-copy">Search Rule34 and download new matches directly to your configured folder. Your credentials and history stay on this device.</p>
+        </section>
+
+        <section class="workspace" aria-label="Downloader">
+          <div class="search-card card">
+            <div class="card-heading">
+              <div>
+                <p class="eyebrow">NEW DOWNLOAD</p>
+                <h2>What are you looking for?</h2>
+              </div>
+              <span class="site-chip"><span class="site-chip-dot"></span> RULE34</span>
+            </div>
+            <form id="download-form">
+              <label for="tags">Search tags</label>
+              <div class="input-wrap">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4.5 4.5"></path></svg>
+                <input id="tags" name="tags" type="text" maxlength="500" placeholder="e.g. landscape sunset" autocomplete="off" required>
+              </div>
+              <p class="field-hint">Separate tags with spaces. Search results are filtered to explicit-rated posts.</p>
+              <button id="start-button" class="button button-primary" type="submit">
+                <span>Search and download</span>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+              </button>
+            </form>
+            <p id="form-error" class="inline-error" role="alert" hidden></p>
+          </div>
+
+          <aside class="privacy-card card">
+            <div class="privacy-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"></path></svg>
+            </div>
+            <p class="eyebrow">LOCAL BY DESIGN</p>
+            <h2>Your data stays yours.</h2>
+            <p>Credentials, download history, and files are handled by the local app. This interface makes no third-party requests.</p>
+            <div class="privacy-rule"></div>
+            <div class="privacy-detail"><span class="detail-check">✓</span><span>Saved to your configured folder</span></div>
+            <div class="privacy-detail"><span class="detail-check">✓</span><span>Duplicates skipped automatically</span></div>
+            <div class="privacy-detail"><span class="detail-check">✓</span><span>Metadata saved alongside each file</span></div>
+          </aside>
+        </section>
+
+        <section id="activity-section" class="activity card" aria-labelledby="activity-title">
+          <div class="activity-heading">
+            <div>
+              <p class="eyebrow">DOWNLOAD QUEUE</p>
+              <h2 id="activity-title">Activity</h2>
+            </div>
+            <div class="activity-actions">
+              <button id="cancel-button" class="button button-secondary" type="button" hidden>Cancel download</button>
+              <span id="status-pill" class="status-pill status-idle"><span class="status-indicator"></span><span id="status-label">Ready</span></span>
+            </div>
+          </div>
+          <div class="progress-area">
+            <div class="progress-copy"><span id="progress-label">Waiting for a search</span><span id="progress-count"></span></div>
+            <progress id="progress" max="100" value="0"></progress>
+          </div>
+          <div id="activity-log" class="activity-log" role="log" aria-live="polite" aria-relevant="additions">
+            <div class="empty-state"><span class="empty-icon">↗</span><span>Your download updates will appear here.</span></div>
+          </div>
+        </section>
+
+        <footer>
+          <span>TAGFILE <span class="footer-separator">/</span> LOCAL DOWNLOAD MANAGER</span>
+          <span>Use responsibly · Review results before saving</span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

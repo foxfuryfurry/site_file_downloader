@@ -1,12 +1,14 @@
 """Tests for downloaded media and Rule34 metadata sidecars."""
 
 import json
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.downloader.sources.rule34_adapter import Rule34Post
+from app.downloader.errors import DownloadCancelled
 from app.downloader.storage.filesystem import save_post
 from app.downloader.transport.rate_limiter import RequestRateLimiter
 
@@ -49,6 +51,23 @@ class FilesystemTests(unittest.TestCase):
                 api_data,
             )
             self.assertFalse(list(Path(directory).glob("*.part")))
+
+    def test_cancelled_save_leaves_no_partial_file_or_sidecar(self):
+        post = Rule34Post(
+            "123", "artist character", "https://img.rule34.xxx/images/123/image.jpg"
+        )
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(DownloadCancelled):
+                save_post(
+                    post,
+                    Path(directory),
+                    RequestRateLimiter({"rule34": 1}),
+                    cancel_event,
+                )
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
 
 if __name__ == "__main__":

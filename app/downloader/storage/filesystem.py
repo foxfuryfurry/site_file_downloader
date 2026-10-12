@@ -1,6 +1,7 @@
 """Filesystem operations for downloaded files."""
 
 import json
+import threading
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -13,6 +14,7 @@ def save_post(
     post: Rule34Post,
     downloads_dir: Path,
     rate_limiter: RequestRateLimiter,
+    cancel_event: threading.Event | None = None,
 ) -> Path:
     """Download one post using a safe, stable filename based on its post ID."""
     extension = Path(unquote(urlparse(post.file_url).path)).suffix.lower()
@@ -22,7 +24,12 @@ def save_post(
     temporary_metadata_path = metadata_path.with_suffix(".json.part")
     try:
         downloads_dir.mkdir(parents=True, exist_ok=True)
-        download_to_path(post.file_url, temporary_path, "rule34", rate_limiter)
+        if cancel_event is None:
+            download_to_path(post.file_url, temporary_path, "rule34", rate_limiter)
+        else:
+            download_to_path(
+                post.file_url, temporary_path, "rule34", rate_limiter, cancel_event
+            )
         temporary_path.replace(destination)
         with temporary_metadata_path.open("w", encoding="utf-8") as metadata_file:
             json.dump(post.raw_data, metadata_file, ensure_ascii=False, indent=2)

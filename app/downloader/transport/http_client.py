@@ -1,11 +1,13 @@
 """Small standard-library HTTP helpers for the Rule34 API and media files."""
 
 import json
+import threading
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
+from ..errors import DownloadCancelled
 from .rate_limiter import RequestRateLimiter
 
 
@@ -41,9 +43,17 @@ def _response_diagnostic(
     )
 
 
-def get_json(url: str, site: str, rate_limiter: RequestRateLimiter) -> object:
+def get_json(
+    url: str,
+    site: str,
+    rate_limiter: RequestRateLimiter,
+    cancel_event: threading.Event | None = None,
+) -> object:
     """Fetch and decode a JSON response."""
-    rate_limiter.wait(site)
+    if cancel_event is None:
+        rate_limiter.wait(site)
+    else:
+        rate_limiter.wait(site, cancel_event)
     try:
         with urlopen(_request(url), timeout=TIMEOUT_SECONDS) as response:
             body = response.read()
@@ -87,14 +97,25 @@ def download_to_path(
     destination: Path,
     site: str,
     rate_limiter: RequestRateLimiter,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Stream a remote file to a local destination."""
-    rate_limiter.wait(site)
+    if cancel_event is None:
+        rate_limiter.wait(site)
+    else:
+        rate_limiter.wait(site, cancel_event)
     try:
         with urlopen(_request(url), timeout=TIMEOUT_SECONDS) as response:
             with destination.open("wb") as output:
                 while chunk := response.read(1024 * 128):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise DownloadCancelled("Download cancelled.")
                     output.write(chunk)
+                if cancel_event is not None and cancel_event.is_set():
+                    raise DownloadCancelled("Download cancelled.")
+    except DownloadCancelled:
+        destination.unlink(missing_ok=True)
+        raise
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         destination.unlink(missing_ok=True)
         raise RuntimeError(f"Could not download file: {exc}") from exc

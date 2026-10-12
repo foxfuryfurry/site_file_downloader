@@ -1,30 +1,46 @@
 # Downloader application
 
-The Python package lives in `downloader/`.
+The Python package lives in `app/downloader/`.
 
-Run the desktop app from the project root:
+Run the local web app from the project root:
 
 ```console
 python main.py
 ```
 
-To launch the package module instead, run this from inside `app/`:
+This starts a loopback-only web server at `http://127.0.0.1:8765/` and opens
+the interface in your browser. Use `--port 0` to select an available port or
+`--no-browser` to leave the browser closed. To launch the package module
+instead, run this from inside `app/`:
 
 ```console
 python -m downloader
 ```
 
-Enter space-separated Rule34 tags in the search box and choose **Search and
-download**. The app fetches results in pages of up to 1,000, continuing with
-Rule34's `pid` until all matching pages have been read. New files are saved in
-the configured download folder, and completed post IDs are recorded in history
-so they are skipped on later searches. Each media file also gets a `.json`
-sidecar with the complete post record returned by Rule34, using the same base
-filename (for example, `rule34_123.jpg` and `rule34_123.json`).
+Enter space-separated Rule34 tags and choose **Search and download**. The app
+fetches results in pages of up to 1,000, continuing with Rule34's `pid` until
+all matching pages have been read. New files are saved in the configured
+download folder, and completed post IDs are recorded in history so they are
+skipped on later searches. Each media file also gets a `.json` sidecar with the
+complete post record returned by Rule34, using the same base filename (for
+example, `rule34_123.jpg` and `rule34_123.json`).
+
+The browser UI is bundled with the Python package and makes no third-party
+requests. The local server binds only to `127.0.0.1`; downloads themselves
+still require a connection to Rule34. Progress updates stream from the backend,
+and cancellation is checked between search pages, downloads, rate-limit waits,
+and streamed file chunks. An active network read can take up to its configured
+30-second timeout to finish before cancellation takes effect.
+
+The browser talks to a same-origin local API: `POST /api/tasks` with
+`{"tags":"..."}` starts a task, `GET /api/tasks/{id}/events` streams progress
+as Server-Sent Events, and `DELETE /api/tasks/{id}` requests cancellation.
+Progress events include the search/download phase, completed and total counts,
+and downloaded/skipped/failed counts. Terminal events report completion,
+cancellation, or an actionable error.
 
 Searches are restricted to posts rated explicit and filter several common
-underage-related tags. The confirmation checkbox is not an age-verification
-mechanism; review results responsibly.
+underage-related tags. Review results responsibly.
 
 ## Local data files
 
